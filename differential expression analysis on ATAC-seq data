@@ -1,0 +1,39 @@
+##########Step 1: Generate Peak Count Matrix
+Assuming you have BAM files and peak files ready:
+
+# Install bedtools if not already installed
+module load bedtools
+
+# Merge all peaks to create a union peak set
+cat /path/to/peaks/*.bed | sort -k1,1 -k2,2n | bedtools merge > union_peaks.bed
+
+# Count reads in each peak for each sample
+for bam in /path/to/bam/*.bam
+do
+    sample=$(basename $bam .shifted.sorted.bam)
+    bedtools coverage -a union_peaks.bed -b $bam -counts > ${sample}_counts.txt
+done
+
+# Combine counts into a single matrix
+paste *_counts.txt > combined_counts.txt
+
+###############Step 2: Normalize Data and Perform Differential Analysis
+# Load necessary libraries
+library(DESeq2)
+
+# Read in the count matrix and sample information
+countData <- as.matrix(read.csv("combined_counts.txt", sep="\t", header=TRUE, row.names=1))
+colData <- data.frame(row.names=colnames(countData),
+                      condition=c("Empty", "Empty", "PB1", "PB1", "VHL", "VHL", "PB1_VHL", "PB1_VHL"))
+
+# Create DESeq2 dataset
+dds <- DESeqDataSetFromMatrix(countData=countData, colData=colData, design=~condition)
+
+# Normalize the data
+dds <- DESeq(dds)
+
+# Get results
+res <- results(dds)
+
+# Save results
+write.csv(as.data.frame(res), file="differential_peaks.csv")
