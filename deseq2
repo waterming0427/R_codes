@@ -1,0 +1,627 @@
+##### when filtering the deseq2 tables,  Filtering Out "LOC," "Uncharacterized," or "Pseudogene
+```{r}
+# Load DESeq2
+library(DESeq2)
+
+# Create DESeqDataSet with batch effect included in the design formula
+dds_filtered <- DESeqDataSetFromMatrix(countData = filtered_counts, colData = sample_info, design = ~ batch + condition)
+
+# Estimate size factors and dispersions with robust settings
+dds_filtered <- estimateSizeFactors(dds_filtered)
+dds_filtered <- estimateDispersions(dds_filtered)
+
+# Run DESeq2 with robust options including batch effect
+dds_robust <- DESeq(dds_filtered, minReplicatesForReplace=Inf, useT=TRUE, fitType='parametric')
+
+# Obtain results for the robust analysis with batch effect included
+results_robust <- results(dds_robust)
+
+# Explore the results
+summary(results_robust)
+
+
+```
+```{r}
+# Remove Caki2_Empty_1 from the sample information and counts data
+samples_to_keep <- colnames(filtered_counts) != "Caki2_Empty_1"
+filtered_counts_no_empty1 <- filtered_counts[, samples_to_keep]
+sample_info_no_empty1 <- sample_info[samples_to_keep, ]
+
+# Create DESeqDataSet without Caki2_Empty_1 and including batch effect
+dds_no_empty1 <- DESeqDataSetFromMatrix(countData = filtered_counts_no_empty1, colData = sample_info_no_empty1, design = ~ batch + condition)
+
+# Run the standard DESeq2 pipeline with batch effect included
+dds_no_empty1 <- DESeq(dds_no_empty1)
+
+# Obtain results for the regular DESeq2 analysis without Caki2_Empty_1 and including batch effect
+results_no_empty1 <- results(dds_no_empty1)
+
+# Explore the results
+summary(results_no_empty1)
+
+```
+```{r}
+# Merge the results for comparison
+results_robust_df <- as.data.frame(results_robust)
+results_no_empty1_df <- as.data.frame(results_no_empty1)
+
+# Merge based on row names (gene identifiers)
+comparison_df <- merge(results_robust_df, results_no_empty1_df, by="row.names", suffixes=c("_robust", "_no_empty1"))
+rownames(comparison_df) <- comparison_df$Row.names
+comparison_df$Row.names <- NULL
+
+# Plot comparisons of log fold changes
+library(ggplot2)
+
+# Compare log fold changes
+ggplot(comparison_df, aes(x=log2FoldChange_robust, y=log2FoldChange_no_empty1)) +
+  geom_point(alpha=0.5) +
+  geom_abline(slope=1, intercept=0, color="red", linetype="dashed") +
+  labs(title="Comparison of Log Fold Changes: Robust DESeq2 vs. DESeq2 Without Caki2_Empty_1 (Including Batch Effect)",
+       x="Log2 Fold Change (Robust DESeq2)", y="Log2 Fold Change (DESeq2 Without Caki2_Empty_1)") +
+  theme_minimal()
+
+# Compare adjusted p-values
+ggplot(comparison_df, aes(x=padj_robust, y=padj_no_empty1)) +
+  geom_point(alpha=0.5) +
+  geom_abline(slope=1, intercept=0, color="red", linetype="dashed") +
+  labs(title="Comparison of Adjusted P-values: Robust DESeq2 vs. DESeq2 Without Caki2_Empty_1 (Including Batch Effect)",
+       x="Adjusted P-value (Robust DESeq2)", y="Adjusted P-value (DESeq2 Without Caki2_Empty_1)") +
+  theme_minimal()
+
+```
+```{r}
+# Load DESeq2
+library(DESeq2)
+
+# Create DESeqDataSet including Caki2_Empty_1 with batch effect in the design formula
+dds_full <- DESeqDataSetFromMatrix(countData = filtered_counts, colData = sample_info, design = ~ batch + condition)
+
+# Run the standard DESeq2 pipeline
+dds_full <- DESeq(dds_full)
+
+# Obtain results for the regular DESeq2 analysis including Caki2_Empty_1
+results_full <- results(dds_full)
+
+# Explore the results
+summary(results_full)
+
+```
+```{r}
+
+# Load ggplot2 for visualization
+library(ggplot2)
+
+# Convert results to data frames and ensure row names are set correctly
+results_full_df <- as.data.frame(results_full)
+results_no_empty1_df <- as.data.frame(results_no_empty1)
+
+# Add row names as a column for merging
+results_full_df$gene_id <- rownames(results_full_df)
+results_no_empty1_df$gene_id <- rownames(results_no_empty1_df)
+
+# Merge based on 'gene_id' column for comparison
+comparison_df <- merge(results_full_df, results_no_empty1_df, by="gene_id", suffixes=c("_full", "_no_empty1"))
+
+# Reset row names to 'gene_id'
+rownames(comparison_df) <- comparison_df$gene_id
+comparison_df$gene_id <- NULL
+
+# Plot comparisons of log fold changes between the full dataset and without Caki2_Empty_1
+ggplot(comparison_df, aes(x=log2FoldChange_full, y=log2FoldChange_no_empty1)) +
+  geom_point(alpha=0.5) +
+  geom_abline(slope=1, intercept=0, color="red", linetype="dashed") +
+  labs(title="Comparison of Log Fold Changes: Full DESeq2 vs. DESeq2 Without Caki2_Empty_1",
+       x="Log2 Fold Change (Full DESeq2 Including Empty_1)", 
+       y="Log2 Fold Change (DESeq2 Without Caki2_Empty_1)") +
+  theme_minimal()
+
+# Compare adjusted p-values between the full dataset and without Caki2_Empty_1
+ggplot(comparison_df, aes(x=padj_full, y=padj_no_empty1)) +
+  geom_point(alpha=0.5) +
+  geom_abline(slope=1, intercept=0, color="red", linetype="dashed") +
+  labs(title="Comparison of Adjusted P-values: Full DESeq2 vs. DESeq2 Without Caki2_Empty_1",
+       x="Adjusted P-value (Full DESeq2 Including Empty_1)", 
+       y="Adjusted P-value (DESeq2 Without Caki2_Empty_1)") +
+  theme_minimal()
+
+```
+```{r}
+# Load DESeq2 package
+library(DESeq2)
+
+# Filter to remove Caki2_Empty_1 from counts and sample information
+samples_to_keep <- colnames(filtered_counts) != "Caki2_Empty_1"
+filtered_counts_no_empty1 <- filtered_counts[, samples_to_keep]
+sample_info_no_empty1 <- sample_info[samples_to_keep, ]
+
+# Create DESeqDataSet without Caki2_Empty_1 and with batch effect included
+dds_no_empty1 <- DESeqDataSetFromMatrix(countData = filtered_counts_no_empty1, colData = sample_info_no_empty1, design = ~ batch + condition)
+
+# Run the DESeq2 pipeline
+dds_no_empty1 <- DESeq(dds_no_empty1)
+
+# Generate results for each comparison
+# PB1 vs. Empty
+results_PB1_vs_Empty <- results(dds_no_empty1, contrast=c("condition", "PB1", "Empty"))
+
+# Filter significant genes while handling NAs in adjusted p-values
+significant_PB1_vs_Empty <- results_PB1_vs_Empty[!is.na(results_PB1_vs_Empty$padj) & results_PB1_vs_Empty$padj < 0.05, ]
+
+# PB1_VHL vs. Empty
+results_PB1_VHL_vs_Empty <- results(dds_no_empty1, contrast=c("condition", "PB1_VHL", "Empty"))
+significant_PB1_VHL_vs_Empty <- results_PB1_VHL_vs_Empty[!is.na(results_PB1_VHL_vs_Empty$padj) & results_PB1_VHL_vs_Empty$padj < 0.05, ]
+
+# VHL vs. Empty
+results_VHL_vs_Empty <- results(dds_no_empty1, contrast=c("condition", "VHL", "Empty"))
+significant_VHL_vs_Empty <- results_VHL_vs_Empty[!is.na(results_VHL_vs_Empty$padj) & results_VHL_vs_Empty$padj < 0.05, ]
+
+# Display counts for significant genes
+# Extract normalized counts
+normalized_counts <- counts(dds_no_empty1, normalized=TRUE)
+
+# Show counts for significant genes for PB1 vs. Empty
+significant_genes_PB1_vs_Empty <- rownames(significant_PB1_vs_Empty)
+counts_PB1_vs_Empty <- normalized_counts[significant_genes_PB1_vs_Empty, ]
+print("Counts for significant genes (PB1 vs. Empty):")
+print(counts_PB1_vs_Empty)
+
+# Show counts for significant genes for PB1_VHL vs. Empty
+significant_genes_PB1_VHL_vs_Empty <- rownames(significant_PB1_VHL_vs_Empty)
+counts_PB1_VHL_vs_Empty <- normalized_counts[significant_genes_PB1_VHL_vs_Empty, ]
+print("Counts for significant genes (PB1_VHL vs. Empty):")
+print(counts_PB1_VHL_vs_Empty)
+
+# Show counts for significant genes for VHL vs. Empty
+significant_genes_VHL_vs_Empty <- rownames(significant_VHL_vs_Empty)
+counts_VHL_vs_Empty <- normalized_counts[significant_genes_VHL_vs_Empty, ]
+print("Counts for significant genes (VHL vs. Empty):")
+print(counts_VHL_vs_Empty)
+
+```
+
+
+```{r}
+# Load DESeq2 package
+library(DESeq2)
+
+# Filter to remove Caki2_Empty_1 from counts and sample information
+samples_to_keep <- colnames(filtered_counts) != "Caki2_Empty_1"
+filtered_counts_no_empty1 <- filtered_counts[, samples_to_keep]
+sample_info_no_empty1 <- sample_info[samples_to_keep, ]
+
+# Create DESeqDataSet without Caki2_Empty_1 and with batch effect included
+dds_no_empty1 <- DESeqDataSetFromMatrix(countData = filtered_counts_no_empty1, colData = sample_info_no_empty1, design = ~ batch + condition)
+
+# Run the DESeq2 pipeline
+dds_no_empty1 <- DESeq(dds_no_empty1)
+
+# Generate results for each comparison
+# PB1 vs. Empty
+results_PB1_vs_Empty <- results(dds_no_empty1, contrast=c("condition", "PB1", "Empty"))
+
+# Filter significant genes while handling NAs in adjusted p-values
+significant_PB1_vs_Empty <- results_PB1_vs_Empty[!is.na(results_PB1_vs_Empty$padj) & results_PB1_vs_Empty$padj < 0.05, ]
+
+# Show count of significant genes for PB1 vs. Empty
+cat("Number of significant genes (PB1 vs. Empty):", nrow(significant_PB1_vs_Empty), "\n")
+
+# PB1_VHL vs. Empty
+results_PB1_VHL_vs_Empty <- results(dds_no_empty1, contrast=c("condition", "PB1_VHL", "Empty"))
+significant_PB1_VHL_vs_Empty <- results_PB1_VHL_vs_Empty[!is.na(results_PB1_VHL_vs_Empty$padj) & results_PB1_VHL_vs_Empty$padj < 0.05, ]
+
+# Show count of significant genes for PB1_VHL vs. Empty
+cat("Number of significant genes (PB1_VHL vs. Empty):", nrow(significant_PB1_VHL_vs_Empty), "\n")
+
+# VHL vs. Empty
+results_VHL_vs_Empty <- results(dds_no_empty1, contrast=c("condition", "VHL", "Empty"))
+significant_VHL_vs_Empty <- results_VHL_vs_Empty[!is.na(results_VHL_vs_Empty$padj) & results_VHL_vs_Empty$padj < 0.05, ]
+
+# Show count of significant genes for VHL vs. Empty
+cat("Number of significant genes (VHL vs. Empty):", nrow(significant_VHL_vs_Empty), "\n")
+
+
+
+
+
+```
+
+```{r}
+# Load DESeq2 package
+library(DESeq2)
+
+# Create DESeqDataSet including Caki2_Empty_1 with batch effect in the design formula
+dds_full <- DESeqDataSetFromMatrix(countData = filtered_counts, colData = sample_info, design = ~ batch + condition)
+
+# Run the DESeq2 pipeline
+dds_full <- DESeq(dds_full)
+
+# Generate results for each comparison and count significant genes
+# PB1 vs. Empty
+results_PB1_vs_Empty_full <- results(dds_full, contrast=c("condition", "PB1", "Empty"))
+
+# Filter significant genes while handling NAs in adjusted p-values
+significant_PB1_vs_Empty_full <- results_PB1_vs_Empty_full[!is.na(results_PB1_vs_Empty_full$padj) & results_PB1_vs_Empty_full$padj < 0.05, ]
+
+# Show count of significant genes for PB1 vs. Empty
+cat("Number of significant genes (PB1 vs. Empty) in full data:", nrow(significant_PB1_vs_Empty_full), "\n")
+
+# PB1_VHL vs. Empty
+results_PB1_VHL_vs_Empty_full <- results(dds_full, contrast=c("condition", "PB1_VHL", "Empty"))
+significant_PB1_VHL_vs_Empty_full <- results_PB1_VHL_vs_Empty_full[!is.na(results_PB1_VHL_vs_Empty_full$padj) & results_PB1_VHL_vs_Empty_full$padj < 0.05, ]
+
+# Show count of significant genes for PB1_VHL vs. Empty
+cat("Number of significant genes (PB1_VHL vs. Empty) in full data:", nrow(significant_PB1_VHL_vs_Empty_full), "\n")
+
+# VHL vs. Empty
+results_VHL_vs_Empty_full <- results(dds_full, contrast=c("condition", "VHL", "Empty"))
+significant_VHL_vs_Empty_full <- results_VHL_vs_Empty_full[!is.na(results_VHL_vs_Empty_full$padj) & results_VHL_vs_Empty_full$padj < 0.05, ]
+
+# Show count of significant genes for VHL vs. Empty
+cat("Number of significant genes (VHL vs. Empty) in full data:", nrow(significant_VHL_vs_Empty_full), "\n")
+
+```
+```{r}
+install.packages("VennDiagram")
+library(VennDiagram)
+
+```
+
+
+```{r}
+
+# Generate significant gene sets for both methods
+# Method 1: Full dataset (including Caki2_Empty_1)
+# (Assuming previous results already calculated as significant_PB1_vs_Empty_full, significant_PB1_VHL_vs_Empty_full, significant_VHL_vs_Empty_full)
+
+# Method 2: Dataset without Caki2_Empty_1
+# (Assuming previous results already calculated as significant_PB1_vs_Empty, significant_PB1_VHL_vs_Empty, significant_VHL_vs_Empty)
+
+# Convert rownames to vectors of significant genes for each comparison
+sig_genes_PB1_vs_Empty_full <- rownames(significant_PB1_vs_Empty_full)
+sig_genes_PB1_vs_Empty_no_empty1 <- rownames(significant_PB1_vs_Empty)
+
+sig_genes_PB1_VHL_vs_Empty_full <- rownames(significant_PB1_VHL_vs_Empty_full)
+sig_genes_PB1_VHL_vs_Empty_no_empty1 <- rownames(significant_PB1_VHL_vs_Empty)
+
+sig_genes_VHL_vs_Empty_full <- rownames(significant_VHL_vs_Empty_full)
+sig_genes_VHL_vs_Empty_no_empty1 <- rownames(significant_VHL_vs_Empty)
+
+# Compare the significant genes for PB1 vs. Empty
+overlap_PB1_vs_Empty <- intersect(sig_genes_PB1_vs_Empty_full, sig_genes_PB1_vs_Empty_no_empty1)
+unique_full_PB1_vs_Empty <- setdiff(sig_genes_PB1_vs_Empty_full, sig_genes_PB1_vs_Empty_no_empty1)
+unique_no_empty1_PB1_vs_Empty <- setdiff(sig_genes_PB1_vs_Empty_no_empty1, sig_genes_PB1_vs_Empty_full)
+
+# Print comparison results
+cat("PB1 vs. Empty - Full vs. No Empty_1:\n")
+cat("Overlap:", length(overlap_PB1_vs_Empty), "\n")
+cat("Unique to Full:", length(unique_full_PB1_vs_Empty), "\n")
+cat("Unique to No Empty_1:", length(unique_no_empty1_PB1_vs_Empty), "\n\n")
+
+# Compare the significant genes for PB1_VHL vs. Empty
+overlap_PB1_VHL_vs_Empty <- intersect(sig_genes_PB1_VHL_vs_Empty_full, sig_genes_PB1_VHL_vs_Empty_no_empty1)
+unique_full_PB1_VHL_vs_Empty <- setdiff(sig_genes_PB1_VHL_vs_Empty_full, sig_genes_PB1_VHL_vs_Empty_no_empty1)
+unique_no_empty1_PB1_VHL_vs_Empty <- setdiff(sig_genes_PB1_VHL_vs_Empty_no_empty1, sig_genes_PB1_VHL_vs_Empty_full)
+
+# Print comparison results
+cat("PB1_VHL vs. Empty - Full vs. No Empty_1:\n")
+cat("Overlap:", length(overlap_PB1_VHL_vs_Empty), "\n")
+cat("Unique to Full:", length(unique_full_PB1_VHL_vs_Empty), "\n")
+cat("Unique to No Empty_1:", length(unique_no_empty1_PB1_VHL_vs_Empty), "\n\n")
+
+# Compare the significant genes for VHL vs. Empty
+overlap_VHL_vs_Empty <- intersect(sig_genes_VHL_vs_Empty_full, sig_genes_VHL_vs_Empty_no_empty1)
+unique_full_VHL_vs_Empty <- setdiff(sig_genes_VHL_vs_Empty_full, sig_genes_VHL_vs_Empty_no_empty1)
+unique_no_empty1_VHL_vs_Empty <- setdiff(sig_genes_VHL_vs_Empty_no_empty1, sig_genes_VHL_vs_Empty_full)
+
+# Print comparison results
+cat("VHL vs. Empty - Full vs. No Empty_1:\n")
+cat("Overlap:", length(overlap_VHL_vs_Empty), "\n")
+cat("Unique to Full:", length(unique_full_VHL_vs_Empty), "\n")
+cat("Unique to No Empty_1:", length(unique_no_empty1_VHL_vs_Empty), "\n\n")
+
+# Optional: Visualize the overlaps with Venn diagrams
+# Example for PB1 vs. Empty
+venn.diagram(
+  x = list(Full = sig_genes_PB1_vs_Empty_full, No_Empty_1 = sig_genes_PB1_vs_Empty_no_empty1),
+  category.names = c("Full", "No Empty_1"),
+  filename = NULL,
+  output = TRUE,
+  imagetype = "png",
+  main = "PB1 vs. Empty - Full vs. No Empty_1"
+)
+
+
+```
+```{r}
+# Load necessary libraries
+library(VennDiagram)
+library(grid)
+
+# Create the Venn diagram and save it as a grid object
+venn_plot <- venn.diagram(
+  x = list(Full = sig_genes_PB1_vs_Empty_full, No_Empty_1 = sig_genes_PB1_vs_Empty_no_empty1),
+  category.names = c("Full", "No Empty_1"),
+  filename = NULL,  # Keep as NULL to draw directly
+  output = TRUE,
+  main = "PB1 vs. Empty - Full vs. No Empty_1"
+)
+
+# Display the Venn diagram
+grid.newpage()
+grid.draw(venn_plot)
+
+```
+```{r}
+# Load necessary libraries
+library(VennDiagram)
+library(grid)
+
+# Create the Venn diagram and save it as a grid object
+venn_plot <- venn.diagram(
+  x = list(Full = sig_genes_PB1_VHL_vs_Empty_full, No_Empty_1 = sig_genes_PB1_VHL_vs_Empty_no_empty1),
+  category.names = c("Full", "No Empty_1"),
+  filename = NULL,  # Keep as NULL to draw directly
+  output = TRUE,
+  main = "PB1_VHL vs. Empty - Full vs. No Empty_1"
+)
+
+# Display the Venn diagram
+grid.newpage()
+grid.draw(venn_plot)
+
+```
+```{r}
+
+# Create the Venn diagram and save it as a grid object
+venn_plot <- venn.diagram(
+  x = list(Full = sig_genes_VHL_vs_Empty_full, No_Empty_1 = sig_genes_VHL_vs_Empty_no_empty1),
+  category.names = c("Full", "No Empty_1"),
+  filename = NULL,  # Keep as NULL to draw directly
+  output = TRUE,
+  main = "VHL vs. Empty - Full vs. No Empty_1"
+)
+
+# Display the Venn diagram
+grid.newpage()
+grid.draw(venn_plot)
+```
+```{r}
+# Load necessary libraries
+library(ggplot2)
+
+# Merge fold changes for PB1 vs. Empty
+fc_PB1_vs_Empty <- merge(
+  as.data.frame(results_PB1_vs_Empty_full[, "log2FoldChange"]),
+  as.data.frame(results_PB1_vs_Empty[, "log2FoldChange"]),
+  by = "row.names",
+  suffixes = c("_full", "_no_empty1")
+)
+colnames(fc_PB1_vs_Empty) <- c("Gene", "LFC_Full", "LFC_No_Empty1")
+
+# Plot the correlation for PB1 vs. Empty
+ggplot(fc_PB1_vs_Empty, aes(x = LFC_Full, y = LFC_No_Empty1)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "blue", se = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Correlation of Fold Changes: PB1 vs. Empty",
+    x = "Log2 Fold Change (Full Data)",
+    y = "Log2 Fold Change (No Empty_1)"
+  ) +
+  theme_minimal() +
+  annotate("text", x = 1, y = -3, label = paste("Correlation: ", round(cor(fc_PB1_vs_Empty$LFC_Full, fc_PB1_vs_Empty$LFC_No_Empty1), 2)))
+
+# Repeat for PB1_VHL vs. Empty
+fc_PB1_VHL_vs_Empty <- merge(
+  as.data.frame(results_PB1_VHL_vs_Empty_full[, "log2FoldChange"]),
+  as.data.frame(results_PB1_VHL_vs_Empty[, "log2FoldChange"]),
+  by = "row.names",
+  suffixes = c("_full", "_no_empty1")
+)
+colnames(fc_PB1_VHL_vs_Empty) <- c("Gene", "LFC_Full", "LFC_No_Empty1")
+
+ggplot(fc_PB1_VHL_vs_Empty, aes(x = LFC_Full, y = LFC_No_Empty1)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "blue", se = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Correlation of Fold Changes: PB1_VHL vs. Empty",
+    x = "Log2 Fold Change (Full Data)",
+    y = "Log2 Fold Change (No Empty_1)"
+  ) +
+  theme_minimal() +
+  annotate("text", x = 1, y = -3, label = paste("Correlation: ", round(cor(fc_PB1_VHL_vs_Empty$LFC_Full, fc_PB1_VHL_vs_Empty$LFC_No_Empty1), 2)))
+
+# Repeat for VHL vs. Empty
+fc_VHL_vs_Empty <- merge(
+  as.data.frame(results_VHL_vs_Empty_full[, "log2FoldChange"]),
+  as.data.frame(results_VHL_vs_Empty[, "log2FoldChange"]),
+  by = "row.names",
+  suffixes = c("_full", "_no_empty1")
+)
+colnames(fc_VHL_vs_Empty) <- c("Gene", "LFC_Full", "LFC_No_Empty1")
+
+ggplot(fc_VHL_vs_Empty, aes(x = LFC_Full, y = LFC_No_Empty1)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "blue", se = FALSE) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Correlation of Fold Changes: VHL vs. Empty",
+    x = "Log2 Fold Change (Full Data)",
+    y = "Log2 Fold Change (No Empty_1)"
+  ) +
+  theme_minimal() +
+  annotate("text", x = 1, y = -3, label = paste("Correlation: ", round(cor(fc_VHL_vs_Empty$LFC_Full, fc_VHL_vs_Empty$LFC_No_Empty1), 2)))
+
+
+```
+Scatter Plot and Correlation Line: Each plot shows the scatter of log fold changes from the full data versus the data without Caki2_Empty_1, with a linear regression line to highlight the trend.
+Diagonal Reference Line: The dashed red line represents a perfect correlation (slope = 1, intercept = 0), helping to visualize deviations from ideal consistency.
+Correlation Coefficient: Annotated on each plot, the correlation coefficient provides a numerical measure of the agreement between the two methods.
+
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(org.Hs.eg.db)  
+library(AnnotationDbi)
+
+# Clean Ensembl IDs by removing version numbers
+clean_ensembl_ids <- sub("\\..*", "", rownames(results_PB1_vs_Empty_full))
+
+# Retrieve gene annotations using cleaned Ensembl IDs
+annotations <- select(org.Hs.eg.db, 
+                      keys = clean_ensembl_ids, 
+                      columns = c("SYMBOL", "GENENAME"), 
+                      keytype = "ENSEMBL")
+
+# Identify and extract duplicates in the annotations
+duplicates <- annotations[duplicated(annotations$ENSEMBL) | duplicated(annotations$ENSEMBL, fromLast = TRUE), ]
+
+# Count and review the duplicates
+num_duplicates <- length(unique(duplicates$ENSEMBL))
+cat("Number of unique duplicated Ensembl IDs:", num_duplicates, "\n")
+print(duplicates)
+
+# Merge DESeq2 results with annotations to include log2 fold changes
+# Convert DESeq2 results to data frame
+results_PB1_vs_Empty_full_df <- as.data.frame(results_PB1_vs_Empty_full)
+
+# Clean row names of DESeq2 results (remove version numbers)
+results_PB1_vs_Empty_full_df$ENSEMBL <- sub("\\..*", "", rownames(results_PB1_vs_Empty_full_df))
+
+# Merge the duplicates with DESeq2 results to bring in log2 fold changes
+merged_duplicates <- merge(duplicates, results_PB1_vs_Empty_full_df, 
+                           by.x = "ENSEMBL", by.y = "ENSEMBL", all.x = TRUE)
+
+# Review the merged data
+cat("Merged duplicates with DESeq2 results:\n")
+print(merged_duplicates)
+
+# Optional: Save merged duplicates for detailed review
+output_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/testingreplicates"
+write.csv(merged_duplicates, file = file.path(output_path, "merged_duplicates_with_log2fc.csv"), row.names = FALSE)
+
+cat("Merged duplicates have been saved for manual review.\n")
+
+```
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(org.Hs.eg.db)  
+library(AnnotationDbi)
+library(dplyr)
+
+# Define the output path
+output_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"
+
+# Function to clean, annotate, and filter DESeq2 results
+annotate_and_filter <- function(deseq_results, comparison_name) {
+  
+  # Clean Ensembl IDs by removing version numbers
+  clean_ensembl_ids <- sub("\\..*", "", rownames(deseq_results))
+  
+  # Retrieve gene annotations using cleaned Ensembl IDs
+  annotations <- AnnotationDbi::select(org.Hs.eg.db, 
+                                       keys = clean_ensembl_ids, 
+                                       columns = c("SYMBOL", "GENENAME"), 
+                                       keytype = "ENSEMBL")
+  
+  # Function to filter out NA, LOC pseudogenes, uncharacterized, or pseudogene annotations
+  filter_annotations <- function(df) {
+    df %>%
+      filter(!is.na(SYMBOL) & !is.na(GENENAME)) %>%  # Remove rows with NA values in SYMBOL or GENENAME
+      group_by(ENSEMBL) %>%
+      # Prioritize keeping entries that do not have "LOC", "uncharacterized", or "pseudogene" in SYMBOL or GENENAME
+      filter(
+        !grepl("^(LOC|uncharacterized)", SYMBOL, ignore.case = TRUE) &
+        !grepl("pseudogene", GENENAME, ignore.case = TRUE) | n() == 1
+      ) %>%
+      ungroup()
+  }
+  
+  # Apply the filter to remove unwanted annotations
+  annotations_filtered <- filter_annotations(annotations)
+  
+  # Merge filtered annotations with DESeq2 results
+  deseq_results_df <- as.data.frame(deseq_results)
+  deseq_results_df$ENSEMBL <- sub("\\..*", "", rownames(deseq_results_df))
+  
+  # Merge the filtered annotations with DESeq2 results to include log2 fold changes
+  annotated_results <- merge(deseq_results_df, annotations_filtered, 
+                             by.x = "ENSEMBL", by.y = "ENSEMBL", all.x = TRUE)
+  
+  # Save the annotated results
+  write.csv(annotated_results, file = file.path(output_path, paste0(comparison_name, "_annotated_filtered.csv")), row.names = TRUE)
+  
+  cat(paste("Annotated comparison results for", comparison_name, "have been saved.\n"))
+}
+
+# Annotate and filter for each comparison in the full dataset
+annotate_and_filter(results_PB1_vs_Empty_full, "results_PB1_vs_Empty_full")
+annotate_and_filter(results_PB1_VHL_vs_Empty_full, "results_PB1_VHL_vs_Empty_full")
+annotate_and_filter(results_VHL_vs_Empty_full, "results_VHL_vs_Empty_full")
+
+```
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(org.Hs.eg.db)  
+library(AnnotationDbi)
+library(dplyr)
+
+# Assuming you have a DESeqDataSet object (dds_no_empty1) for the dataset without Caki2_Empty_1
+# If not already done, run DESeq on the DESeqDataSet
+dds_no_empty1 <- DESeq(dds_no_empty1)
+
+# Generate results for each comparison without Caki2_Empty_1
+results_PB1_vs_Empty_no_empty1 <- results(dds_no_empty1, contrast = c("condition", "PB1", "Empty"))
+results_PB1_VHL_vs_Empty_no_empty1 <- results(dds_no_empty1, contrast = c("condition", "PB1_VHL", "Empty"))
+results_VHL_vs_Empty_no_empty1 <- results(dds_no_empty1, contrast = c("condition", "VHL", "Empty"))
+
+# Function to clean, annotate, and filter DESeq2 results
+annotate_and_filter <- function(deseq_results, comparison_name) {
+  
+  # Clean Ensembl IDs by removing version numbers
+  clean_ensembl_ids <- sub("\\..*", "", rownames(deseq_results))
+  
+  # Retrieve gene annotations using cleaned Ensembl IDs
+  annotations <- AnnotationDbi::select(org.Hs.eg.db, 
+                                       keys = clean_ensembl_ids, 
+                                       columns = c("SYMBOL", "GENENAME"), 
+                                       keytype = "ENSEMBL")
+  
+  # Function to filter out NA, LOC pseudogenes, uncharacterized, or pseudogene annotations
+  filter_annotations <- function(df) {
+    df %>%
+      filter(!is.na(SYMBOL) & !is.na(GENENAME)) %>%  # Remove rows with NA values in SYMBOL or GENENAME
+      group_by(ENSEMBL) %>%
+      # Prioritize keeping entries that do not have "LOC", "uncharacterized", or "pseudogene" in SYMBOL or GENENAME
+      filter(
+        !grepl("^(LOC|uncharacterized)", SYMBOL, ignore.case = TRUE) &
+        !grepl("pseudogene", GENENAME, ignore.case = TRUE) | n() == 1
+      ) %>%
+      ungroup()
+  }
+  
+  # Apply the filter to remove unwanted annotations
+  annotations_filtered <- filter_annotations(annotations)
+  
+  # Merge filtered annotations with DESeq2 results
+  deseq_results_df <- as.data.frame(deseq_results)
+  deseq_results_df$ENSEMBL <- sub("\\..*", "", rownames(deseq_results_df))
+  
+  # Merge the filtered annotations with DESeq2 results to include log2 fold changes
+  annotated_results <- merge(deseq_results_df, annotations_filtered, 
+                             by.x = "ENSEMBL", by.y = "ENSEMBL", all.x = TRUE)
+  
+  # Save the annotated results
+  write.csv(annotated_results, file = file.path(output_path, paste0(comparison_name, "_annotated_filtered.csv")), row.names = TRUE)
+  
+  cat(paste("Annotated comparison results for", comparison_name, "have been saved.\n"))
+}
+
+# Annotate and filter for each comparison in the dataset without Caki2_Empty_1
+annotate_and_filter(results_PB1_vs_Empty_no_empty1, "results_PB1_vs_Empty_no_empty1")
+annotate_and_filter(results_PB1_VHL_vs_Empty_no_empty1, "results_PB1_VHL_vs_Empty_no_empty1")
+annotate_and_filter(results_VHL_vs_Empty_no_empty1, "results_VHL_vs_Empty_no_empty1")
