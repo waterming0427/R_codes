@@ -1,0 +1,968 @@
+```{r}
+# Install variancePartition package
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("variancePartition")
+```
+
+
+```{r}
+library(variancePartition)
+library(DESeq2)
+library(ggplot2)
+library(patchwork)
+library(limma)
+```
+
+
+```{r}
+# Read the featureCounts table, skipping the first row of metadata
+counts_table <- read.table("/Users/kathiexu/Desktop/RNAseq/featurecount_table/Caki2/caki2counts.txt", header=TRUE, row.names=1, skip=1)
+
+# Extract only the count columns (ensure columns are correctly indexed)
+counts <- counts_table[, grep("bam$", colnames(counts_table))]
+
+# Rename columns to match sample names (strip paths)
+colnames(counts) <- c("Caki2_Empty_1", "Caki2_Empty_2", "Caki2_Empty_3",
+                      "Caki2_PB1_1", "Caki2_PB1_2", "Caki2_PB1_3",
+                      "Caki2_VHL_1", "Caki2_VHL_2", "Caki2_VHL_3",
+                      "Caki2_PB1_VHL_1", "Caki2_PB1_VHL_3")
+
+head(counts)
+
+
+```
+```{r}
+# Create metadata including condition and batch information
+sample_info <- data.frame(
+  row.names = colnames(counts),
+  condition = factor(c("Empty", "Empty", "Empty",
+                       "PB1", "PB1", "PB1",
+                       "VHL", "VHL", "VHL",
+                       "PB1_VHL", "PB1_VHL")),
+  batch = factor(c("Batch1", "Batch2", "Batch3",
+                   "Batch1", "Batch2", "Batch3",
+                   "Batch1", "Batch2", "Batch3",
+                   "Batch2","Batch3")) # Example batch info
+)
+```
+
+
+```{r}
+# Run DESeq2 without batch correction
+dds_no_batch <- DESeqDataSetFromMatrix(countData = counts,
+                                       colData = sample_info,
+                                       design = ~ condition)
+dds_no_batch <- DESeq(dds_no_batch)
+results_no_batch <- results(dds_no_batch)
+
+# Run DESeq2 with batch correction
+dds_with_batch <- DESeqDataSetFromMatrix(countData = counts,
+                                         colData = sample_info,
+                                         design = ~ batch + condition)
+dds_with_batch <- DESeq(dds_with_batch)
+results_with_batch <- results(dds_with_batch)
+```
+```{r}
+# Load additional libraries if not already loaded
+library(ggplot2)
+
+# Plot PCA without batch correction, with batch as color and condition as shape
+vsd_no_batch <- vst(dds_no_batch, blind=FALSE)
+pca_no_batch <- plotPCA(vsd_no_batch, intgroup = c("batch", "condition")) +
+                aes(color = batch, shape = condition) +
+                ggtitle("PCA Without Batch Correction") +
+                theme_minimal()
+
+# Plot PCA with batch correction, with batch as color and condition as shape
+vsd_with_batch <- vst(dds_with_batch, blind=FALSE)
+pca_with_batch <- plotPCA(vsd_with_batch, intgroup = c("batch", "condition")) +
+                  aes(color = batch, shape = condition) +
+                  ggtitle("PCA With Batch Correction") +
+                  theme_minimal()
+
+# Display both PCA plots side by side for comparison
+(pca_no_batch | pca_with_batch)
+
+```
+```{r}
+# Compare the number of significant genes
+sig_no_batch <- sum(results_no_batch$padj < 0.05, na.rm=TRUE)
+sig_with_batch <- sum(results_with_batch$padj < 0.05, na.rm=TRUE)
+
+print(paste("Number of significant genes without batch correction:", sig_no_batch))
+print(paste("Number of significant genes with batch correction:", sig_with_batch))
+
+```
+```{r}
+# Filter out Empty_1 from counts and metadata
+filtered_counts <- counts[, !colnames(counts) %in% c("Caki2_Empty_1")]
+filtered_sample_info <- sample_info[!rownames(sample_info) %in% c("Caki2_Empty_1"), ]
+
+# Re-run DESeq2 without batch correction
+dds_no_batch_filtered <- DESeqDataSetFromMatrix(countData = filtered_counts,
+                                                colData = filtered_sample_info,
+                                                design = ~ condition)
+dds_no_batch_filtered <- DESeq(dds_no_batch_filtered)
+results_no_batch_filtered <- results(dds_no_batch_filtered)
+
+# Re-run DESeq2 with batch correction
+dds_with_batch_filtered <- DESeqDataSetFromMatrix(countData = filtered_counts,
+                                                  colData = filtered_sample_info,
+                                                  design = ~ batch + condition)
+dds_with_batch_filtered <- DESeq(dds_with_batch_filtered)
+results_with_batch_filtered <- results(dds_with_batch_filtered)
+
+
+# Plot PCA without batch correction (Filtered)
+vsd_no_batch_filtered <- vst(dds_no_batch_filtered, blind=FALSE)
+pca_no_batch_filtered <- plotPCA(vsd_no_batch_filtered, intgroup = c("batch", "condition")) +
+                         aes(color = batch, shape = condition) +
+                         ggtitle("PCA Without Batch Correction (Filtered)") +
+                         theme_minimal()
+
+# Plot PCA with batch correction (Filtered)
+vsd_with_batch_filtered <- vst(dds_with_batch_filtered, blind=FALSE)
+pca_with_batch_filtered <- plotPCA(vsd_with_batch_filtered, intgroup = c("batch", "condition")) +
+                           aes(color = batch, shape = condition) +
+                           ggtitle("PCA With Batch Correction (Filtered)") +
+                           theme_minimal()
+
+# Display both PCA plots side by side for comparison (Filtered)
+(pca_no_batch_filtered | pca_with_batch_filtered)
+
+# Compare the number of significant genes after filtering
+sig_no_batch_filtered <- sum(results_no_batch_filtered$padj < 0.05, na.rm=TRUE)
+sig_with_batch_filtered <- sum(results_with_batch_filtered$padj < 0.05, na.rm=TRUE)
+
+print(paste("Number of significant genes without batch correction (filtered):", sig_no_batch_filtered))
+print(paste("Number of significant genes with batch correction (filtered):", sig_with_batch_filtered))
+
+```
+```{r}
+
+# Create DESeq2 dataset for the full data
+dds_full <- DESeqDataSetFromMatrix(countData = counts, colData = sample_info, design = ~ condition)
+
+# Variance Stabilizing Transformation
+vsd_full <- vst(dds_full, blind=FALSE)
+
+# Batch correction using removeBatchEffect
+vsd_full_data <- assay(vsd_full)
+batch_corrected_full <- removeBatchEffect(vsd_full_data, batch = sample_info$batch, design = model.matrix(~ sample_info$condition))
+
+# Create a DESeqTransform object with the batch-corrected data
+vsd_full_corrected <- vsd_full
+assay(vsd_full_corrected) <- batch_corrected_full
+
+# PCA for the full dataset after batch correction
+pca_full_corrected <- plotPCA(vsd_full_corrected, intgroup = c("batch", "condition")) +
+                      aes(color = batch, shape = condition) +
+                      ggtitle("PCA After Batch Correction (Full Dataset)") +
+                      theme_minimal()
+
+### 2. Batch Correction and PCA for the Filtered Dataset (Excluding Empty_1)
+
+# Create DESeq2 dataset for the filtered data
+dds_filtered <- DESeqDataSetFromMatrix(countData = filtered_counts, colData = filtered_sample_info, design = ~ condition)
+
+# Variance Stabilizing Transformation
+vsd_filtered <- vst(dds_filtered, blind=FALSE)
+
+# Batch correction using removeBatchEffect
+vsd_filtered_data <- assay(vsd_filtered)
+batch_corrected_filtered <- removeBatchEffect(vsd_filtered_data, batch = filtered_sample_info$batch, design = model.matrix(~ filtered_sample_info$condition))
+
+# Create a DESeqTransform object with the batch-corrected data
+vsd_filtered_corrected <- vsd_filtered
+assay(vsd_filtered_corrected) <- batch_corrected_filtered
+
+# PCA for the filtered dataset after batch correction
+pca_filtered_corrected <- plotPCA(vsd_filtered_corrected, intgroup = c("batch", "condition")) +
+                          aes(color = batch, shape = condition) +
+                          ggtitle("PCA After Batch Correction (Filtered Dataset)") +
+                          theme_minimal()
+
+# Display both PCA plots side by side for comparison
+(pca_full_corrected | pca_filtered_corrected)
+```
+
+```{r}
+
+
+# Assuming vsd_full_data contains the variance-stabilized data for the full dataset
+# Filter out genes with very low variance across samples
+# Set a threshold to filter genes with variance below a certain level
+variance_threshold <- 1e-05  # Adjust this threshold as needed based on your data
+gene_variances <- rowVars(vsd_full_data)
+
+# Filter out genes with variance below the threshold
+keep_genes <- gene_variances > variance_threshold
+vsd_full_data_filtered <- vsd_full_data[keep_genes, ]
+
+# Perform voom transformation on filtered data
+voom_full_filtered <- voom(vsd_full_data_filtered)
+
+# Define the formula for variance partitioning
+formula <- ~ batch + condition
+
+# Fit the variance partitioning model on the filtered dataset
+var_part_full_filtered <- fitExtractVarPartModel(voom_full_filtered, formula, sample_info_full)
+
+# Check for any remaining errors
+errors_filtered <- attr(var_part_full_filtered, 'errors')
+if (length(errors_filtered) == 0) {
+  print("No errors after filtering low-variance genes.")
+} else {
+  print("Some errors still persist:")
+  head(errors_filtered)
+}
+
+# Plot variance partitioning results for the filtered dataset
+plotVarPart(var_part_full_filtered) +
+  ggtitle("Variance Partitioning (Full Dataset, After Filtering Low-Variance Genes)") +
+  theme_minimal()
+
+```
+
+```{r}
+# Assuming vsd_filtered_data contains the variance-stabilized data for the filtered dataset (excluding Empty_1)
+# Filter out genes with very low variance across samples
+# Set a threshold to filter genes with variance below a certain level
+variance_threshold <- 1e-05  # Same threshold used previously
+gene_variances_filtered <- rowVars(vsd_filtered_data)
+
+# Filter out genes with variance below the threshold
+keep_genes_filtered <- gene_variances_filtered > variance_threshold
+vsd_filtered_data_filtered <- vsd_filtered_data[keep_genes_filtered, ]
+
+# Perform voom transformation on filtered data
+voom_filtered_filtered <- voom(vsd_filtered_data_filtered)
+
+# Define the formula for variance partitioning
+formula <- ~ batch + condition
+
+# Fit the variance partitioning model on the filtered dataset (excluding Empty_1)
+var_part_filtered_filtered <- fitExtractVarPartModel(voom_filtered_filtered, formula, sample_info_filtered)
+
+# Plot variance partitioning results for the filtered dataset (excluding Empty_1)
+plotVarPart(var_part_filtered_filtered) +
+  ggtitle("Variance Partitioning (Filtered Dataset, Excluding Empty_1)") +
+  theme_minimal()
+
+```
+Interpretation of the Variance Partitioning Violin Plots:
+The violin plots display the distribution of variance explained by each factor (batch, condition, and residuals) across all genes in your dataset. Here's how to interpret them:
+
+Violin Plot Structure:
+
+Width: The width of the violin plot at each point indicates the density of genes explaining that proportion of variance. A wider section shows where more genes have similar variance contributions.
+Center Line and Box: The black line and box within each violin show the median and interquartile range (IQR) of the variance explained.
+Batch vs. Condition Contribution:
+
+Batch: The red violins represent the variance explained by the batch effect.
+Condition: The blue violins represent the variance explained by the condition (biological factor of interest).
+Residuals: The gray violins represent the unexplained variance (residuals).
+Comparing Full Dataset vs. Filtered Dataset (Excluding Empty_1):
+Full Dataset (Including Empty_1):
+
+The batch effect (red violin) explains a substantial portion of the variance for many genes, as shown by the density towards the middle and upper ranges of the violin.
+The condition effect also explains a significant portion of the variance but appears roughly comparable to the batch effect.
+The presence of Empty_1 seems to amplify the batch effect, leading to higher median variance explained by batch.
+Filtered Dataset (Excluding Empty_1):
+
+After removing Empty_1, the variance explained by the batch effect is reduced slightly, but it still remains notable for a significant number of genes.
+The condition effect maintains or slightly increases its variance contribution, suggesting clearer separation of biological conditions when the outlier is removed.
+Residuals (unexplained variance) remain relatively consistent between the two datasets.
+Conclusions:
+Batch Effects Are Present: Both plots indicate that the batch effect contributes a non-negligible portion of the variance, suggesting that it is indeed influencing your data.
+Impact of Removing Empty_1: Removing Empty_1 reduces the batch effect slightly, which might indicate that this outlier was exaggerating the batch variance. However, batch still plays a role even without Empty_1.
+Recommendation: Given the substantial contribution of batch effects to the variance, it is advisable to include batch as a factor in your DESeq2 model to control for these effects and improve the accuracy of your differential expression results.
+```{r}
+# Load necessary library
+library(DESeq2)
+
+# Assuming you have the counts and sample information for the filtered dataset (excluding Empty_1)
+# counts: Filtered counts data
+# sample_info_filtered: Filtered sample metadata excluding Empty_1
+
+# 1. Fit DESeq2 model without batch effect
+dds_no_batch <- DESeqDataSetFromMatrix(countData = filtered_counts,
+                                       colData = filtered_sample_info,
+                                       design = ~ condition)
+dds_no_batch <- DESeq(dds_no_batch)
+
+# 2. Fit DESeq2 model with batch effect
+dds_with_batch <- DESeqDataSetFromMatrix(countData = filtered_counts,
+                                         colData = filtered_sample_info,
+                                         design = ~ batch + condition)
+
+# Perform LRT to compare the full model (with batch) against the reduced model (without batch)
+dds_with_batch <- DESeq(dds_with_batch, test = "LRT", reduced = ~ condition)
+
+# Extract LRT results
+res_lrt <- results(dds_with_batch)
+
+# Check summary of the LRT results
+summary(res_lrt)
+
+# Count the number of genes where batch significantly improves the model
+significant_genes <- sum(res_lrt$padj < 0.05, na.rm = TRUE)
+print(paste("Number of genes where batch effect significantly improves the model:", significant_genes))
+
+# Save the LRT results to a CSV file for further review
+write.csv(as.data.frame(res_lrt), file = "deseq2_lrt_results.csv")
+
+```
+Summary of LRT Results:
+Total Genes with Nonzero Counts: 30,116 genes had nonzero read counts across samples.
+Significant Improvement with Batch Effect: 1,631 genes showed a significant improvement in the model fit when batch effects were included (adjusted p-value < 0.1). This is approximately 5.4% of the genes analyzed.
+Low Counts: A substantial number of genes (16,028 or 53%) were filtered out due to low counts (mean count < 11). These were excluded from the final LRT results due to the independent filtering step, which helps reduce noise from lowly expressed genes.
+Interpretation:
+Significant Batch Effect: The fact that 1,631 genes (about 5.4%) show a significant improvement when batch is included in the model strongly suggests that batch effects are influencing the gene expression data. This reinforces the importance of including batch as a factor in your DESeq2 analysis to account for this technical variability.
+
+Balanced Up and Down Regulation: Among the genes with significant batch effect, the number of genes with log fold changes in both directions (up and down) is fairly balanced. This indicates that batch effects are not biased towards a particular direction of expression change.
+
+Low Counts Filtering: A large portion of genes were filtered out due to low counts, which is a normal part of DESeq2's approach to reduce the influence of noisy data. The independent filtering step is helping to focus the analysis on genes with sufficient data to make reliable inferences.
+
+Recommendations:
+Include Batch in DESeq2: Given the significant contribution of batch effects identified, it is advisable to include batch as a factor in your DESeq2 design (~ batch + condition). This will help control for batch-related variability, leading to more accurate identification of differentially expressed genes.
+
+Continue with Batch-Corrected Analysis: Proceed with the full differential expression analysis using the batch-corrected DESeq2 model to ensure that the reported differences are truly due to biological conditions rather than technical artifacts.
+
+```{r}
+# Load necessary library
+library(DESeq2)
+
+# Assuming filtered_counts and filtered_sample_info are already defined
+# filtered_counts: Filtered counts data excluding Empty_1
+# filtered_sample_info: Filtered sample metadata excluding Empty_1
+
+# 1. Fit DESeq2 model without batch effect (only condition)
+dds_no_batch_filtered <- DESeqDataSetFromMatrix(countData = filtered_counts,
+                                                colData = filtered_sample_info,
+                                                design = ~ condition)
+dds_no_batch_filtered <- DESeq(dds_no_batch_filtered)
+
+# 2. Fit DESeq2 model with batch effect (batch + condition)
+dds_with_batch_filtered <- DESeqDataSetFromMatrix(countData = filtered_counts,
+                                                  colData = filtered_sample_info,
+                                                  design = ~ batch + condition)
+
+# Perform LRT to compare the full model (with batch) against the reduced model (without batch)
+dds_with_batch_filtered <- DESeq(dds_with_batch_filtered, test = "LRT", reduced = ~ condition)
+
+# Extract LRT results
+res_lrt_filtered <- results(dds_with_batch_filtered)
+
+# Check summary of the LRT results
+summary(res_lrt_filtered)
+
+# Count the number of genes where batch significantly improves the model
+significant_genes_filtered <- sum(res_lrt_filtered$padj < 0.05, na.rm = TRUE)
+print(paste("Number of genes where batch effect significantly improves the model (filtered data):", significant_genes_filtered))
+
+# Save the LRT results to a CSV file for further review
+write.csv(as.data.frame(res_lrt_filtered), file = "deseq2_lrt_results_filtered.csv")
+
+```
+
+Likelihood Ratio Test (LRT) in DESeq2: Explanation and Comparison
+The Likelihood Ratio Test (LRT) is a statistical method used to compare the goodness of fit between two nested models. In the context of DESeq2 and RNA-seq analysis, it is used to assess whether adding a factor (such as batch) significantly improves the model's ability to explain the variability in gene expression data.
+
+How LRT Works:
+Nested Models: LRT compares two nested models:
+
+Full Model: This model includes all factors of interest, such as condition (biological variable) and batch (technical variable).
+Reduced Model: This model includes only the primary factor of interest (e.g., condition) and excludes the factor being tested (e.g., batch).
+Likelihood Ratio:
+
+The likelihood ratio measures how much better the full model fits the data compared to the reduced model.
+It is computed as the ratio of the likelihoods (or log-likelihoods) of the two models. A higher likelihood indicates a better fit.
+Statistical Test:
+
+The LRT uses a chi-squared test to determine if the improvement in fit from the reduced model to the full model is statistically significant.
+If the LRT p-value is low (e.g., below 0.05 or 0.1 after adjustment), it suggests that the factor being tested (e.g., batch) significantly contributes to explaining the variance in the data.
+What We Are Comparing:
+Null Hypothesis (Reduced Model): The reduced model assumes that the factor being tested (e.g., batch) does not have a significant effect on gene expression.
+Alternative Hypothesis (Full Model): The full model includes the factor (e.g., batch) and assumes it does have an effect.
+Comparison: By comparing these two models using LRT, we determine whether including the factor (batch) significantly improves the fit of the model to the data.
+In Your Analysis:
+Full Model: design = ~ batch + condition
+This model includes both batch effects and condition effects, allowing the model to account for variability due to both factors.
+Reduced Model: design = ~ condition
+This model includes only the condition (biological factor of interest) and excludes batch, assuming batch does not influence gene expression.
+Purpose of LRT:
+The LRT specifically tests whether adding the batch factor improves the explanation of variance in gene expression.
+A significant LRT result (low adjusted p-value) indicates that batch effects significantly affect gene expression, justifying their inclusion in the model.
+Why Use LRT in DESeq2?
+Testing Covariate Significance: LRT helps determine the significance of additional covariates (like batch) in your experimental design.
+Model Fit: It ensures that the model accurately reflects the variability in the data by including significant technical or biological factors.
+Improved Analysis: By identifying and correcting for significant batch effects, you increase the accuracy of identifying true biological differences in gene expression.
+Practical Implication:
+Since your results showed that 1,631 genes had significant LRT results when including batch, this indicates that batch effects are non-negligible and should be included in your DESeq2 analysis to control for this source of variability.
+
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(pheatmap)
+
+# Assuming you have variance-stabilized data from DESeq2 for both datasets
+# vsd_full: Variance-stabilized data for the full dataset including Empty_1
+# vsd_filtered: Variance-stabilized data for the filtered dataset excluding Empty_1
+
+# Calculate sample-to-sample distances for the full dataset (including Empty_1)
+sampleDists_full <- dist(t(assay(vsd_full)))
+sampleDistMatrix_full <- as.matrix(sampleDists_full)
+
+# Plot heatmap for the full dataset
+pheatmap(sampleDistMatrix_full,
+         clustering_distance_rows = sampleDists_full,
+         clustering_distance_cols = sampleDists_full,
+         main = "Sample-to-Sample Distances (Full Dataset Including Empty_1)",
+         annotation_col = as.data.frame(colData(vsd_full)[, c("condition", "batch")]),
+         show_colnames = TRUE,
+         show_rownames = TRUE)
+
+# Calculate sample-to-sample distances for the filtered dataset (excluding Empty_1)
+sampleDists_filtered <- dist(t(assay(vsd_filtered)))
+sampleDistMatrix_filtered <- as.matrix(sampleDists_filtered)
+
+# Plot heatmap for the filtered dataset
+pheatmap(sampleDistMatrix_filtered,
+         clustering_distance_rows = sampleDists_filtered,
+         clustering_distance_cols = sampleDists_filtered,
+         main = "Sample-to-Sample Distances (Filtered Dataset Excluding Empty_1)",
+         annotation_col = as.data.frame(colData(vsd_filtered)[, c("condition", "batch")]),
+         show_colnames = TRUE,
+         show_rownames = TRUE)
+
+```
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(variancePartition)
+library(ggplot2)
+library(limma)  # For voom transformation, if needed
+
+# 1. Prepare the data
+# Variance Stabilizing Transformation for the full dataset (including Empty_1)
+vsd_full <- vst(dds_full, blind = FALSE)
+
+# Extract the variance-stabilized data matrix
+vsd_data_full <- assay(vsd_full)
+
+# Variance Stabilizing Transformation for the filtered dataset (excluding Empty_1)
+vsd_filtered <- vst(dds_filtered, blind = FALSE)
+
+# Extract the variance-stabilized data matrix
+vsd_data_filtered <- assay(vsd_filtered)
+
+# 2. Fit Variance Partitioning Model
+# Define formula including batch and condition
+formula <- ~ batch + condition
+
+# Prepare metadata for variance partitioning
+metadata_full <- as.data.frame(colData(dds_full))
+metadata_filtered <- as.data.frame(colData(dds_filtered))
+
+# Fit variance partitioning models
+# For the full dataset (including Empty_1)
+var_part_full <- fitExtractVarPartModel(vsd_data_full, formula, metadata_full)
+
+# For the filtered dataset (excluding Empty_1)
+var_part_filtered <- fitExtractVarPartModel(vsd_data_filtered, formula, metadata_filtered)
+
+# 3. Visualize Gene-Specific Effects
+
+# Select specific genes to examine (e.g., top variable genes or specific genes of interest)
+genes_of_interest <- c("ENSG00000139618", "ENSG00000157764")  # Replace with your genes of interest
+
+# Extract variance partitioning results for these genes
+var_part_selected_full <- var_part_full[genes_of_interest, ]
+var_part_selected_filtered <- var_part_filtered[genes_of_interest, ]
+
+# Plot variance partitioning for selected genes - Full Dataset
+plotVarPart(var_part_selected_full) +
+  ggtitle("Variance Partitioning for Selected Genes (Full Dataset Including Empty_1)")
+
+# Plot variance partitioning for selected genes - Filtered Dataset
+plotVarPart(var_part_selected_filtered) +
+  ggtitle("Variance Partitioning for Selected Genes (Filtered Dataset Excluding Empty_1)")
+
+
+```
+```{r}
+# Load necessary libraries
+library(dplyr)
+
+# Assuming sample_info contains your metadata for the full dataset
+# Check structure of the metadata to ensure batch and condition are factors
+str(sample_info)
+
+# Convert batch and condition to factors if they are not already
+sample_info$batch <- as.factor(sample_info$batch)
+sample_info$condition <- as.factor(sample_info$condition)
+
+# Check the relationship between batch and condition using a table
+batch_condition_table <- table(sample_info$batch, sample_info$condition)
+print(batch_condition_table)
+
+# Perform a chi-squared test of independence to assess the relationship
+chi_test <- chisq.test(batch_condition_table)
+print(chi_test)
+
+# Correlation analysis - If both are numeric (e.g., numerical IDs), use cor.test
+# However, in most cases with factors, chi-squared test of independence is appropriate
+
+# Interpretation: 
+# - A significant chi-squared result (p-value < 0.05) indicates that batch and condition are not independent,
+#   suggesting potential confounding.
+# - In such cases, including batch as a factor in the DESeq2 design is necessary to adjust for these effects.
+
+```
+```{r}
+# Load necessary library
+library(DESeq2)
+library(ggplot2)
+
+# Assuming vsd_full is your variance-stabilized DESeq2 object including Empty_1
+# Extract the VST data
+vsd_data <- assay(vsd_full)
+
+# Subset data for Empty samples
+empty_samples <- colnames(vsd_data)[colData(vsd_full)$condition == "Empty"]
+
+# Create a data frame for plotting
+expression_data <- data.frame(
+  Sample = rep(empty_samples, each = nrow(vsd_data)),
+  Expression = as.vector(vsd_data[, empty_samples]),
+  Gene = rep(rownames(vsd_data), times = length(empty_samples))
+)
+
+# Boxplot to compare the expression profiles of Empty samples
+ggplot(expression_data, aes(x = Sample, y = Expression, fill = Sample)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(title = "Expression Distribution Across Empty Samples",
+       x = "Sample", y = "Log2 Expression") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Density plot to compare the overall expression distribution
+ggplot(expression_data, aes(x = Expression, fill = Sample, color = Sample)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Density Plot of Expression Across Empty Samples",
+       x = "Log2 Expression", y = "Density") +
+  theme_minimal()
+
+
+```
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(ggplot2)
+
+# Assuming vsd_full is your variance-stabilized DESeq2 object including all samples
+# Extract the VST data
+vsd_data <- assay(vsd_full)
+
+# Create a data frame for plotting with all samples
+expression_data_all <- data.frame(
+  Sample = rep(colnames(vsd_data), each = nrow(vsd_data)),
+  Expression = as.vector(vsd_data),
+  Gene = rep(rownames(vsd_data), times = ncol(vsd_data)),
+  Condition = rep(colData(vsd_full)$condition, each = nrow(vsd_data))
+)
+
+# Boxplot to compare the expression profiles of all samples
+ggplot(expression_data_all, aes(x = Sample, y = Expression, fill = Condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(title = "Expression Distribution Across All Samples",
+       x = "Sample", y = "Log2 Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Density plot to compare the overall expression distribution across all samples
+ggplot(expression_data_all, aes(x = Expression, fill = Sample, color = Sample)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Density Plot of Expression Across All Samples",
+       x = "Log2 Expression", y = "Density") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Adjust legend as needed for clarity
+
+```
+```{r}
+# Summary statistics for expression values
+summary(as.vector(vsd_data))
+
+# Adjust y-axis limits in the boxplot to better capture the spread of data
+ggplot(expression_data_all, aes(x = Sample, y = Expression, fill = Condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(title = "Expression Distribution Across All Samples",
+       x = "Sample", y = "Log2 Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_cartesian(ylim = c(0, 20))  # Adjust limits as needed
+
+# Density plot as an alternative view
+ggplot(expression_data_all, aes(x = Expression, fill = Sample, color = Sample)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Density Plot of Expression Across All Samples",
+       x = "Log2 Expression", y = "Density") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+```{r}
+# Calculate variance for each gene
+gene_variance <- apply(vsd_data, 1, var)
+
+# Plot distribution of variances
+hist(gene_variance, breaks = 50, main = "Distribution of Gene Variances",
+     xlab = "Variance", col = "skyblue")
+
+# Boxplot for a high-variance gene
+high_variance_gene <- names(gene_variance)[which.max(gene_variance)]
+ggplot(expression_data_all[expression_data_all$Gene == high_variance_gene, ], 
+       aes(x = Sample, y = Expression, fill = Condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(title = paste("Expression Distribution for Gene:", high_variance_gene),
+       x = "Sample", y = "Log2 Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+# Read the featureCounts table, skipping the first row of metadata
+counts_table <- read.table("/Users/kathiexu/Desktop/RNAseq/featurecount_table/Caki2/caki2counts.txt", header=TRUE, row.names=1, skip=1)
+
+# Extract only the count columns (ensure columns are correctly indexed)
+counts <- counts_table[, grep("bam$", colnames(counts_table))]
+
+# Rename columns to match sample names (strip paths)
+colnames(counts) <- c("Caki2_Empty_1", "Caki2_Empty_2", "Caki2_Empty_3",
+                      "Caki2_PB1_1", "Caki2_PB1_2", "Caki2_PB1_3",
+                      "Caki2_VHL_1", "Caki2_VHL_2", "Caki2_VHL_3",
+                      "Caki2_PB1_VHL_1", "Caki2_PB1_VHL_3")
+
+# Display the first few rows of the counts data
+head(counts)
+
+# Create metadata including condition and batch information
+sample_info <- data.frame(
+  row.names = colnames(counts),
+  condition = factor(c("Empty", "Empty", "Empty",
+                       "PB1", "PB1", "PB1",
+                       "VHL", "VHL", "VHL",
+                       "PB1_VHL", "PB1_VHL")),
+  batch = factor(c("Batch1", "Batch2", "Batch3",
+                   "Batch1", "Batch2", "Batch3",
+                   "Batch1", "Batch2", "Batch3",
+                   "Batch1", "Batch3")) # Example batch info
+)
+
+# Display the sample metadata
+sample_info
+
+```
+```{r}
+# Perform PCA
+library(DESeq2)
+dds <- DESeqDataSetFromMatrix(countData = counts, colData = sample_info, design = ~ condition)
+vsd <- vst(dds, blind = TRUE)
+plotPCA(vsd, intgroup = "condition")
+
+```
+```{r}
+# Heatmap with hierarchical clustering
+library(pheatmap)
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- colnames(counts)
+colnames(sampleDistMatrix) <- NULL
+pheatmap(sampleDistMatrix, clustering_distance_rows = sampleDists, clustering_distance_cols = sampleDists)
+
+```
+```{r}
+# Sample-to-sample distance
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+heatmap(as.matrix(sampleDists))
+
+```
+```{r}
+# Boxplot of log-transformed counts
+boxplot(log2(counts + 1), las = 2, col = c(rep("red", 3), rep("blue", 3), rep("green", 3), rep("purple", 2)))
+
+```
+
+```{r}
+# Correlation matrix
+corMatrix <- cor(assay(vsd))
+heatmap(corMatrix)
+
+```
+
+```{r}
+# Check Cook's distance
+dds <- estimateSizeFactors(dds)
+dds <- estimateDispersions(dds)
+plotCounts(dds, gene=which.max(rowMeans(counts(dds, normalized=TRUE))), intgroup="condition")
+
+```
+```{r}
+# Define a filtering threshold: Keep genes with counts >= 10 in at least half of the samples
+threshold <- 10
+min_samples <- floor(ncol(counts) / 2)
+
+# Filter low-count genes
+filtered_counts <- counts[rowSums(counts >= threshold) >= min_samples, ]
+
+# Perform Hierarchical Clustering and Sample-to-Sample Distance
+library(pheatmap)
+library(ggplot2)
+
+# Calculate sample-to-sample distance matrix using the filtered counts
+vsd_filtered <- vst(dds_filtered, blind=TRUE)
+sampleDists <- dist(t(assay(vsd_filtered)))
+
+# Visualize with hierarchical clustering heatmap
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- colnames(filtered_counts)
+colnames(sampleDistMatrix) <- colnames(filtered_counts)
+pheatmap(sampleDistMatrix, clustering_distance_rows=sampleDists, clustering_distance_cols=sampleDists,
+         main="Hierarchical Clustering of Samples (Filtered Counts)")
+
+# Boxplot of log-transformed counts
+boxplot(log2(filtered_counts + 1), las=2, 
+        col=rainbow(ncol(filtered_counts)),
+        main="Boxplot of Log-Transformed Counts (Filtered Counts)")
+
+# Correlation matrix of samples
+cor_matrix <- cor(assay(vsd_filtered))
+pheatmap(cor_matrix, main="Sample Correlation Matrix (Filtered Counts)")
+
+```
+
+```{r}
+# Define a threshold: Keep genes with counts >= 10 in at least half of the samples
+threshold <- 10
+min_samples <- floor(ncol(counts) / 2)
+
+# Filter low-count genes
+filtered_counts <- counts[rowSums(counts >= threshold) >= min_samples, ]
+
+# Replot the boxplot of log-transformed counts
+boxplot(log2(filtered_counts + 1), las = 2, 
+        col = c(rep("red", 3), rep("blue", 3), rep("green", 3), rep("purple", 2)),
+        main = "Filtered Counts Distribution")
+
+# Re-run PCA or other downstream analyses as needed
+dds_filtered <- DESeqDataSetFromMatrix(countData = filtered_counts, colData = sample_info, design = ~ condition)
+vsd_filtered <- vst(dds_filtered, blind = TRUE)
+plotPCA(vsd_filtered, intgroup = "condition")
+
+```
+Cook’s Distance is one of the statistical measures we are using to identify whether Caki2_Empty_1 is an outlier.
+
+What is Cook’s Distance?
+Cook’s Distance is a measure used in regression analysis to identify influential data points. It quantifies how much a single data point (or sample) influences the overall regression model's fit. In the context of RNA-seq data analysis using DESeq2, Cook’s distance helps determine the influence of each sample on the model’s fit for each gene.
+
+Key Points About Cook’s Distance:
+Influence Measurement: Cook’s distance calculates how the deletion of a specific sample affects the estimates of the regression coefficients. It considers both the residuals (differences between observed and predicted values) and leverage (how far an independent variable deviates from its mean).
+
+Threshold for Concern: A common rule of thumb is that a Cook’s distance greater than 4/n (where n is the number of samples) may indicate an influential point. If a sample has a high Cook’s distance for many genes, it suggests that the sample is having a disproportionate impact on the results, possibly making it an outlier.
+
+Outlier Detection in RNA-seq:
+
+In RNA-seq analysis, Cook’s distance can help identify samples whose gene expression profiles differ significantly from others in the same group or condition.
+High Cook’s distances indicate that a sample might be skewing the results for certain genes, suggesting that further investigation is needed.
+Why We Are Using Cook’s Distance:
+Identify Outliers: By examining Cook’s distance, we can identify samples that disproportionately influence the analysis results. For example, Caki2_Empty_1 may have an unusually high Cook’s distance, indicating that it is an outlier among its replicates.
+
+Ensure Robust Analysis: Detecting and addressing outliers ensures that the differential expression analysis is not biased by anomalous samples, leading to more reliable and interpretable results.
+
+Follow-Up Actions: If a sample like Caki2_Empty_1 consistently shows high Cook’s distances across many genes, we might decide to:
+
+Exclude it from the analysis.
+Investigate potential technical reasons (e.g., sample preparation errors, sequencing issues).
+Consider biological explanations if the outlier behavior is meaningful.
+Interpretation of Current Plots:
+The plot you provided for ENSG00000131791.8 shows normalized counts across different conditions. We are specifically labeling each sample to see if Caki2_Empty_1 or any other sample deviates significantly within its group.
+Using Cook's distance alongside visual inspection helps confirm if deviations are statistically significant and influential enough to be considered outliers.
+
+```{r}
+# Define a threshold to keep genes with counts >= 10 in at least half of the samples
+threshold <- 10
+min_samples <- floor(ncol(counts) / 2)
+
+# Filter low-count genes
+filtered_counts <- counts[rowSums(counts >= threshold) >= min_samples, ]
+
+# Re-run DESeq2 with the filtered counts
+library(DESeq2)
+dds_filtered <- DESeqDataSetFromMatrix(countData = filtered_counts, colData = sample_info, design = ~ condition)
+
+# Estimate size factors and dispersions
+dds_filtered <- DESeq(dds_filtered)
+
+# Recalculate Cook's distance for the filtered dataset
+cooks_filtered <- assays(dds_filtered)[["cooks"]]
+
+# Check Cook's distance for Caki2_Empty_1
+cooks_empty_1_filtered <- cooks_filtered[,"Caki2_Empty_1"]
+
+# Define a threshold for Cook's distance
+threshold_cooks <- 4 / ncol(filtered_counts)
+
+# Identify genes where Cook's distance exceeds the threshold
+high_influence_genes_filtered <- which(cooks_empty_1_filtered > threshold_cooks)
+
+# Print the number of high-influence genes
+print(length(high_influence_genes_filtered))
+
+# Optional: Plot Cook's distance for filtered genes
+hist(cooks_empty_1_filtered, breaks = 50, main = "Cook's Distance for Caki2_Empty_1 (Filtered Genes)", xlab = "Cook's Distance")
+abline(v = threshold_cooks, col = "red", lty = 2) # Add a line for the threshold
+
+
+```
+
+```{r}
+# Define threshold for Cook's distance
+threshold <- 4 / ncol(counts)
+
+# Find genes with Cook's distance above the threshold
+high_influence_genes <- which(cooks_empty_1 > threshold)
+print(high_influence_genes)
+
+# Optional: Extract these genes for further inspection
+high_influence_counts <- counts[high_influence_genes, ]
+
+# Plot normalized counts for influential genes
+library(ggplot2)
+for (gene in high_influence_genes) {
+  plotCounts(dds, gene=gene, intgroup="condition")
+}
+
+
+```
+
+Identify which genes exceed the Cook’s distance threshold and consider exploring their expression patterns across all samples to understand why Caki2_Empty_1 is influencing them significantly.
+```{r}
+
+# Extract normalized counts for the specific gene "ENSG00000131791.8"
+gene_data <- plotCounts(dds, gene="ENSG00000131791.8", intgroup="condition", returnData=TRUE)
+
+# Add sample names as a column in the data
+gene_data$sample <- rownames(gene_data)
+
+# Create a plot with ggplot2 including sample labels
+library(ggplot2)
+ggplot(gene_data, aes(x=condition, y=count, label=sample, color=condition)) +
+  geom_point(size=3) +
+  geom_text(vjust=-0.5, hjust=0.5, size=3) + # Adjust the position of the labels
+  labs(title="Normalized Counts for ENSG00000131791.8", 
+       x="Condition", y="Normalized Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size=12),
+        axis.text.x = element_text(angle=45, hjust=1, size=10)) # Rotate x-axis labels for clarity
+
+```
+```{r}
+# Extract normalized counts for the specific gene "ENSG00000131791.8"
+gene_data <- plotCounts(dds, gene="ENSG00000274372.5", intgroup="condition", returnData=TRUE)
+
+# Add sample names as a column in the data
+gene_data$sample <- rownames(gene_data)
+
+# Create a plot with ggplot2 including sample labels
+library(ggplot2)
+ggplot(gene_data, aes(x=condition, y=count, label=sample, color=condition)) +
+  geom_point(size=3) +
+  geom_text(vjust=-0.5, hjust=0.5, size=3) + # Adjust the position of the labels
+  labs(title="Normalized Counts for ENSG00000131791.8", 
+       x="Condition", y="Normalized Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size=12),
+        axis.text.x = element_text(angle=45, hjust=1, size=10)) # Rotate x-axis labels for clarity
+```
+
+```{r}
+gene_data <- plotCounts(dds, gene="ENSG00000280649.2", intgroup="condition", returnData=TRUE)
+
+# Add sample names as a column in the data
+gene_data$sample <- rownames(gene_data)
+
+# Create a plot with ggplot2 including sample labels
+library(ggplot2)
+ggplot(gene_data, aes(x=condition, y=count, label=sample, color=condition)) +
+  geom_point(size=3) +
+  geom_text(vjust=-0.5, hjust=0.5, size=3) + # Adjust the position of the labels
+  labs(title="Normalized Counts for ENSG00000131791.8", 
+       x="Condition", y="Normalized Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size=12),
+        axis.text.x = element_text(angle=45, hjust=1, size=10)) # Rotate x-axis labels for clarity
+```
+
+```{r}
+gene_data <- plotCounts(dds, gene="ENSG00000116863.11", intgroup="condition", returnData=TRUE)
+
+# Add sample names as a column in the data
+gene_data$sample <- rownames(gene_data)
+
+# Create a plot with ggplot2 including sample labels
+library(ggplot2)
+ggplot(gene_data, aes(x=condition, y=count, label=sample, color=condition)) +
+  geom_point(size=3) +
+  geom_text(vjust=-0.5, hjust=0.5, size=3) + # Adjust the position of the labels
+  labs(title="Normalized Counts for ENSG00000131791.8", 
+       x="Condition", y="Normalized Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size=12),
+        axis.text.x = element_text(angle=45, hjust=1, size=10)) # Rotate x-axis labels for clarity
+```
+```{r}
+# Assuming dds_filtered contains the filtered DESeqDataSet with relevant samples
+# Recalculate Cook's distance for all samples
+cooks_all_filtered <- assays(dds_filtered)[["cooks"]]
+
+# Subset Cook's distances for samples in the "Empty" condition
+cooks_empty_1 <- cooks_all_filtered[, "Caki2_Empty_1"]
+cooks_empty_2 <- cooks_all_filtered[, "Caki2_Empty_2"]
+cooks_empty_3 <- cooks_all_filtered[, "Caki2_Empty_3"]
+
+# Combine Cook's distances into a data frame for comparison
+cooks_data <- data.frame(
+  Caki2_Empty_1 = cooks_empty_1,
+  Caki2_Empty_2 = cooks_empty_2,
+  Caki2_Empty_3 = cooks_empty_3
+)
+
+# Melt the data for ggplot2 visualization
+library(reshape2)
+cooks_data_melted <- melt(cooks_data, variable.name = "Sample", value.name = "Cook's Distance")
+
+# Plot the Cook's distance comparison using boxplots
+library(ggplot2)
+ggplot(cooks_data_melted, aes(x = Sample, y = `Cook's Distance`, fill = Sample)) +
+  geom_boxplot(outlier.shape = NA) +  # Hide default outliers for clarity
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5) +  # Show data points
+  labs(title = "Comparison of Cook's Distance Across 'Empty' Condition Samples",
+       x = "Sample", y = "Cook's Distance") +
+  theme_minimal() +
+  theme(legend.position = "none") +  # Remove legend as it's redundant
+  scale_y_continuous(limits = c(0, 2))  # Adjust y-axis limits if necessary
+
+```
+Unique Influence of Caki2_Empty_1: The results clearly suggest that Caki2_Empty_1 exhibits a unique pattern of influence, with significantly more genes showing high Cook's distances. This confirms that Caki2_Empty_1 is likely an outlier.
+
+Potential Actions:
+
+Investigate Further: Examine technical aspects (e.g., sample quality, library preparation) and biological reasons that might explain why Caki2_Empty_1 is behaving differently.
+Outlier Handling: Depending on the context and importance of the analysis, you might:
+Exclude Caki2_Empty_1 from the analysis to avoid skewing results.
+Use robust statistical methods that can handle outliers without excluding data.
+Consider including additional biological replicates to ensure the robustness of findings.
