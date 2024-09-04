@@ -1,4 +1,5 @@
 ##### when filtering the deseq2 tables,  Filtering Out "LOC," "Uncharacterized," or "Pseudogene
+#### in the code: I also try to compare the output before and after removing empty1
 ```{r}
 # Load DESeq2
 library(DESeq2)
