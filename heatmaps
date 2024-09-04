@@ -1,0 +1,355 @@
+Heatmap of the top variance genes 
+be careful of scale="row": compare the expression levels of each gene across different samples or conditions. It highlights relative differences within each gene.
+scale="column":compare the expression levels of different genes within each sample or condition. It highlights relative differences within each sample.
+ the values displayed were the variance-stabilized transformed (VST) counts
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(genefilter)
+library(pheatmap)
+```
+
+
+```{r}
+# Load necessary library
+library(DESeq2)
+
+# Assuming 'dds_full' is your DESeq2 object including Caki2_Empty_1
+# Assuming 'dds_no_empty1' is your DESeq2 object without Caki2_Empty_1
+
+# Define the threshold for filtering
+count_threshold <- 10
+min_samples <- ncol(dds_full) / 2  # At least half the samples
+
+# Pre-filter the full dataset
+keep_genes_full <- rowSums(counts(dds_full) >= count_threshold) >= min_samples
+dds_full_filtered <- dds_full[keep_genes_full, ]
+
+# Pre-filter the dataset without Caki2_Empty_1
+keep_genes_no_empty1 <- rowSums(counts(dds_no_empty1) >= count_threshold) >= min_samples
+dds_no_empty1_filtered <- dds_no_empty1[keep_genes_no_empty1, ]
+
+# Perform variance-stabilizing transformation on the filtered datasets
+vsd_full <- vst(dds_full_filtered, blind = FALSE)
+vsd_no_empty1 <- vst(dds_no_empty1_filtered, blind = FALSE)
+
+# Load your annotated data that includes Ensembl IDs and Gene Names
+annotations_full <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_full_annotated_filtered.csv", row.names = 1)
+annotations_no_empty1 <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_no_empty1_annotated_filtered.csv", row.names = 1)
+
+# Create mapping of Ensembl IDs (without version numbers) to Gene Names
+gene_name_mapping_full <- annotations_full$SYMBOL
+names(gene_name_mapping_full) <- sub("\\..*", "", annotations_full$ENSEMBL)  # Remove version numbers
+
+gene_name_mapping_no_empty1 <- annotations_no_empty1$SYMBOL
+names(gene_name_mapping_no_empty1) <- sub("\\..*", "", annotations_no_empty1$ENSEMBL)  # Remove version numbers
+
+# Identify the top 20 most variable genes for both datasets
+topVarGenes_full <- head(order(rowVars(assay(vsd_full)), decreasing = TRUE), 30)
+topVarGenes_no_empty1 <- head(order(rowVars(assay(vsd_no_empty1)), decreasing = TRUE), 30)
+
+# Extract the expression matrices
+mat_full <- assay(vsd_full)[topVarGenes_full, ]
+mat_no_empty1 <- assay(vsd_no_empty1)[topVarGenes_no_empty1, ]
+
+# Clean Ensembl IDs by removing version numbers
+rownames(mat_full) <- sub("\\..*", "", rownames(mat_full))  # Remove version numbers
+rownames(mat_no_empty1) <- sub("\\..*", "", rownames(mat_no_empty1))  # Remove version numbers
+
+# Replace Ensembl IDs with Gene Names using the mapping
+rownames(mat_full) <- gene_name_mapping_full[rownames(mat_full)]
+rownames(mat_no_empty1) <- gene_name_mapping_no_empty1[rownames(mat_no_empty1)]
+
+# Handle missing mappings (replace NA with original Ensembl ID without version)
+rownames(mat_full)[is.na(rownames(mat_full))] <- sub("\\..*", "", rownames(mat_full)[is.na(rownames(mat_full))])
+rownames(mat_no_empty1)[is.na(rownames(mat_no_empty1))] <- sub("\\..*", "", rownames(mat_no_empty1)[is.na(rownames(mat_no_empty1))])
+
+# Center the matrices by subtracting row means
+mat_full <- mat_full - rowMeans(mat_full)
+mat_no_empty1 <- mat_no_empty1 - rowMeans(mat_no_empty1)
+
+# Create annotation data frames
+anno_full <- as.data.frame(colData(vsd_full)[, c("condition", "batch")])
+anno_no_empty1 <- as.data.frame(colData(vsd_no_empty1)[, c("condition", "batch")])
+
+# Generate the heatmap for the full dataset with gene names
+pheatmap(mat_full, 
+         annotation_col = anno_full,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         main = "Heatmap of Top 30 Variable Genes (Full Dataset)",
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+         fontsize_row = 8
+)
+
+# Generate the heatmap for the dataset without Caki2_Empty_1 with gene names
+pheatmap(mat_no_empty1, 
+         annotation_col = anno_no_empty1,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         main = "Heatmap of Top 30 Variable Genes (No Caki2_Empty_1)",
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+         fontsize_row = 4
+)
+
+```
+
+
+Heatmap of the Z score
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(genefilter)
+library(pheatmap)
+
+# Assuming vsd_full and vsd_no_empty1 are your VST-transformed DESeq2 objects
+
+# Load your annotated data that includes Ensembl IDs and Gene Names
+annotations_full <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_full_annotated_filtered.csv", row.names = 1)
+annotations_no_empty1 <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_no_empty1_annotated_filtered.csv", row.names = 1)
+
+# Create mapping of Ensembl IDs (without version numbers) to Gene Names
+gene_name_mapping_full <- annotations_full$SYMBOL
+names(gene_name_mapping_full) <- sub("\\..*", "", annotations_full$ENSEMBL)  # Remove version numbers
+
+gene_name_mapping_no_empty1 <- annotations_no_empty1$SYMBOL
+names(gene_name_mapping_no_empty1) <- sub("\\..*", "", annotations_no_empty1$ENSEMBL)  # Remove version numbers
+
+# Identify the top 20 most variable genes for both datasets
+topVarGenes_full <- head(order(rowVars(assay(vsd_full)), decreasing = TRUE), 20)
+topVarGenes_no_empty1 <- head(order(rowVars(assay(vsd_no_empty1)), decreasing = TRUE), 20)
+
+# Extract the expression matrices
+mat_full <- assay(vsd_full)[topVarGenes_full, ]
+mat_no_empty1 <- assay(vsd_no_empty1)[topVarGenes_no_empty1, ]
+
+# Clean Ensembl IDs by removing version numbers
+rownames(mat_full) <- sub("\\..*", "", rownames(mat_full))  # Remove version numbers
+rownames(mat_no_empty1) <- sub("\\..*", "", rownames(mat_no_empty1))  # Remove version numbers
+
+# Replace Ensembl IDs with Gene Names using the mapping
+rownames(mat_full) <- gene_name_mapping_full[rownames(mat_full)]
+rownames(mat_no_empty1) <- gene_name_mapping_no_empty1[rownames(mat_no_empty1)]
+
+# Handle missing mappings (replace NA with original Ensembl ID without version)
+rownames(mat_full)[is.na(rownames(mat_full))] <- sub("\\..*", "", rownames(mat_full)[is.na(rownames(mat_full))])
+rownames(mat_no_empty1)[is.na(rownames(mat_no_empty1))] <- sub("\\..*", "", rownames(mat_no_empty1)[is.na(rownames(mat_no_empty1))])
+
+# Calculate Z-scores for each gene across samples
+zscore_full <- t(scale(t(mat_full)))  # Scale by rows (genes)
+zscore_no_empty1 <- t(scale(t(mat_no_empty1)))  # Scale by rows (genes)
+
+# Create annotation data frames
+anno_full <- as.data.frame(colData(vsd_full)[, c("condition", "batch")])
+anno_no_empty1 <- as.data.frame(colData(vsd_no_empty1)[, c("condition", "batch")])
+
+# Generate the Z-score heatmap for the full dataset with gene names
+pheatmap(zscore_full, 
+         annotation_col = anno_full,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         scale = "none",  # Z-scores are already scaled
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         main = "Heatmap of Z-scores (Top 20 Variable Genes - Full Dataset)",
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+         fontsize_row = 8  # Adjust font size for row labels
+)
+
+# Generate the Z-score heatmap for the dataset without Caki2_Empty_1 with gene names
+pheatmap(zscore_no_empty1, 
+         annotation_col = anno_no_empty1,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         scale = "none",  # Z-scores are already scaled
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         main = "Heatmap of Z-scores (Top 20 Variable Genes - No Caki2_Empty_1)",
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+         fontsize_row = 8  # Adjust font size for row labels
+)
+
+
+```
+```{r}
+# Load necessary libraries
+library(pheatmap)
+library(dplyr)
+
+# Define the path to your annotated and filtered significant results
+input_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"
+
+# Load significant results files
+results_VHL_vs_Empty <- read.csv(file.path(input_path, "results_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv"), row.names = 1)
+results_PB1_vs_Empty <- read.csv(file.path(input_path, "results_PB1_vs_Empty_no_empty1_annotated_filtered_significant.csv"), row.names = 1)
+results_PB1_VHL_vs_Empty <- read.csv(file.path(input_path, "results_PB1_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv"), row.names = 1)
+
+# Remove rows with NA in the log2FoldChange column
+results_VHL_vs_Empty <- na.omit(results_VHL_vs_Empty)
+results_PB1_vs_Empty <- na.omit(results_PB1_vs_Empty)
+results_PB1_VHL_vs_Empty <- na.omit(results_PB1_VHL_vs_Empty)
+
+
+# Merge the data frames using SYMBOL as the key, including all genes (full join)
+combined_results <- full_join(
+  results_VHL_vs_Empty %>% select(SYMBOL, log2FoldChange) %>% rename(VHL_vs_Empty = log2FoldChange),
+  results_PB1_vs_Empty %>% select(SYMBOL, log2FoldChange) %>% rename(PB1_vs_Empty = log2FoldChange),
+  by = "SYMBOL"
+) %>%
+  full_join(
+    results_PB1_VHL_vs_Empty %>% select(SYMBOL, log2FoldChange) %>% rename(PB1_VHL_vs_Empty = log2FoldChange),
+    by = "SYMBOL"
+  )
+
+# Set row names as gene names (SYMBOL)
+rownames(combined_results) <- combined_results$SYMBOL
+combined_results <- combined_results[, -1]  # Remove the SYMBOL column after setting row names
+
+# Impute NA values with zero
+combined_results[is.na(combined_results)] <- 0
+
+# Calculate the overall maximum absolute fold change for each gene across all comparisons
+combined_results$max_abs_foldchange <- apply(abs(combined_results), 1, max)
+
+# Select the top 10 genes with highest positive fold change and top 10 with most negative fold change
+top_increased <- combined_results %>% 
+  filter(rowSums(combined_results > 0) > 0) %>%  # Filter to include only rows with positive changes
+  arrange(desc(max_abs_foldchange)) %>%
+  slice_head(n = 10)
+
+top_decreased <- combined_results %>% 
+  filter(rowSums(combined_results < 0) > 0) %>%  # Filter to include only rows with negative changes
+  arrange(max_abs_foldchange) %>%
+  slice_head(n = 10)
+
+# Combine top increased and decreased fold change genes
+top_foldchange_genes <- rbind(top_increased, top_decreased)
+
+# Remove the helper column used for selection
+top_foldchange_genes <- top_foldchange_genes[, -ncol(top_foldchange_genes)]
+
+# Plot the heatmap of top 20 fold change genes
+pheatmap(top_foldchange_genes, 
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+          scale = "row",
+         main = "Heatmap of Top 60 Fold Change Genes (Significant Genes - Imputed with 0)",
+         color = colorRampPalette(c("blue", "white", "red"))(50), # Blue for down, red for up-regulation
+         
+         
+         fontsize_row = 6  # Adjust font size for row labels
+        )  # Adjust font size for row labels
+
+###  cellwidth = 10,    # Adjust the width of each tile
+#         cellheight = 10,   # Adjust the height of each tile
+ #        height = 1,       # Adjust the overall height of the heatmap
+  #       width = 1 
+
+```
+
+```{r}
+# Load necessary libraries
+library(pheatmap)
+library(dplyr)
+
+# Define the path to your annotated and filtered significant results
+input_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"
+
+# Load significant results files for full data
+results_VHL_vs_Empty_full <- read.csv(file.path(input_path, "results_VHL_vs_Empty_full_annotated_filtered_significant.csv"), row.names = 1)
+results_PB1_vs_Empty_full <- read.csv(file.path(input_path, "results_PB1_vs_Empty_full_annotated_filtered_significant.csv"), row.names = 1)
+results_PB1_VHL_vs_Empty_full <- read.csv(file.path(input_path, "results_PB1_VHL_vs_Empty_full_annotated_filtered_significant.csv"), row.names = 1)
+
+# Load significant results files for data without Caki2_Empty_1
+results_VHL_vs_Empty_no_empty1 <- read.csv(file.path(input_path, "results_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv"), row.names = 1)
+results_PB1_vs_Empty_no_empty1 <- read.csv(file.path(input_path, "results_PB1_vs_Empty_no_empty1_annotated_filtered_significant.csv"), row.names = 1)
+results_PB1_VHL_vs_Empty_no_empty1 <- read.csv(file.path(input_path, "results_PB1_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv"), row.names = 1)
+########
+# Function to process, remove NAs, and plot heatmap for each dataset
+plot_foldchange_heatmap <- function(results_VHL, results_PB1, results_PB1_VHL, title) {
+  # Remove rows with NA in the SYMBOL column
+  results_VHL <- results_VHL %>% filter(!is.na(SYMBOL))
+  results_PB1 <- results_PB1 %>% filter(!is.na(SYMBOL))
+  results_PB1_VHL <- results_PB1_VHL %>% filter(!is.na(SYMBOL))
+  
+  # Merge the data frames using SYMBOL as the key, including all genes (full join)
+  combined_results <- full_join(
+    results_VHL %>% select(SYMBOL, log2FoldChange) %>% rename(VHL_vs_Empty = log2FoldChange),
+    results_PB1 %>% select(SYMBOL, log2FoldChange) %>% rename(PB1_vs_Empty = log2FoldChange),
+    by = "SYMBOL"
+  ) %>%
+    full_join(
+      results_PB1_VHL %>% select(SYMBOL, log2FoldChange) %>% rename(PB1_VHL_vs_Empty = log2FoldChange),
+      by = "SYMBOL"
+    )
+  
+  # Set row names as gene names (SYMBOL)
+  rownames(combined_results) <- combined_results$SYMBOL
+  combined_results <- combined_results[, -1]  # Remove the SYMBOL column after setting row names
+  
+  # Impute NA values with zero after merging
+  combined_results[is.na(combined_results)] <- 0
+  
+  # Calculate the overall maximum absolute fold change for each gene across all comparisons
+  combined_results$max_abs_foldchange <- apply(abs(combined_results), 1, max)
+  
+  # Select the top 10 genes with highest positive fold change and top 10 with most negative fold change
+  top_increased <- combined_results %>% 
+    filter(rowSums(combined_results > 0) > 0) %>%  # Filter to include only rows with positive changes
+    arrange(desc(max_abs_foldchange)) %>%
+    slice_head(n = 10)
+  
+  top_decreased <- combined_results %>% 
+    filter(rowSums(combined_results < 0) > 0) %>%  # Filter to include only rows with negative changes
+    arrange(max_abs_foldchange) %>%
+    slice_head(n = 10)
+  
+  # Combine top increased and decreased fold change genes
+  top_foldchange_genes <- rbind(top_increased, top_decreased)
+  
+  # Remove the helper column used for selection
+  top_foldchange_genes <- top_foldchange_genes[, -ncol(top_foldchange_genes)]
+  
+  # Plot the heatmap of top 20 fold change genes
+  pheatmap(top_foldchange_genes, 
+           cluster_rows = TRUE,
+           cluster_cols = TRUE,
+           show_rownames = TRUE,
+           show_colnames = TRUE,
+           
+           main = title,
+           color = colorRampPalette(c("blue", "white", "red"))(50), # Blue for down, red for up-regulation
+           fontsize_row = 6,   # Adjust font size for row labels
+           cellwidth = 10,     # Adjust cell width
+           cellheight = 5,    # Adjust cell height
+           height = 12,        # Adjust overall heatmap height
+           width = 10          # Adjust overall heatmap width
+  )
+}
+
+# Plot heatmap for the full dataset
+plot_foldchange_heatmap(
+  results_VHL_vs_Empty_full, 
+  results_PB1_vs_Empty_full, 
+  results_PB1_VHL_vs_Empty_full, 
+  title = "Heatmap of Top 20 Fold Change Genes (Full Data - Imputed with 0)"
+)
+
+# Plot heatmap for the dataset without Caki2_Empty_1
+plot_foldchange_heatmap(
+  results_VHL_vs_Empty_no_empty1, 
+  results_PB1_vs_Empty_no_empty1, 
+  results_PB1_VHL_vs_Empty_no_empty1, 
+  title = "Heatmap of Top 20 Fold Change Genes (No Caki2_Empty_1 - Imputed with 0)"
+)
+
+#no scale = "row",  # Scale by rows to visualize relative changes within each gene for now
+```
