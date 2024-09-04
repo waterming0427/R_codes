@@ -1,5 +1,15 @@
 ##### when filtering the deseq2 tables,  Filtering Out "LOC," "Uncharacterized," or "Pseudogene
 #### in the code: I also try to compare the output before and after removing empty1
+#####How DESeq2 Handles Low Counts and Outliers:
+Independent Filtering of Low Counts:
+DESeq2 automatically performs independent filtering to enhance the detection power of differentially expressed genes. This process involves removing genes with very low counts across all samples, as these genes typically do not contain enough information for reliable statistical testing.
+The filtering is based on the mean of normalized counts: genes with very low average counts across samples are often excluded because they do not pass a variability threshold that DESeq2 deems necessary for robust statistical analysis.
+Outlier Detection and Adjustment:
+DESeq2 uses Cook’s distance to identify and flag outliers. If a particular sample has an extreme count for a gene that could disproportionately influence the results, DESeq2 marks the affected gene’s adjusted p-value (padj) as NA for that sample.
+This helps prevent outliers from skewing the differential expression results.
+Adjusted P-values (padj) and NA Values:
+In DESeq2’s results, padj values that are set to NA indicate that the corresponding gene did not pass the independent filtering criteria or was identified as an outlier. This automatic adjustment helps to ensure the FDR (False Discovery Rate) remains controlled.
+
 ```{r}
 # Load DESeq2
 library(DESeq2)
@@ -626,3 +636,178 @@ annotate_and_filter <- function(deseq_results, comparison_name) {
 annotate_and_filter(results_PB1_vs_Empty_no_empty1, "results_PB1_vs_Empty_no_empty1")
 annotate_and_filter(results_PB1_VHL_vs_Empty_no_empty1, "results_PB1_VHL_vs_Empty_no_empty1")
 annotate_and_filter(results_VHL_vs_Empty_no_empty1, "results_VHL_vs_Empty_no_empty1")
+
+
+```{r}
+# Set the low-count threshold
+threshold <- 0.1
+
+# Check how many samples need to meet the threshold (e.g., at least half the samples)
+min_samples <- ncol(counts) / 2
+
+# Identify genes with low counts
+low_count_genes <- rowSums(counts >= threshold) < min_samples
+
+# Count the number of low-count genes
+num_low_count_genes <- sum(low_count_genes)
+
+# Output the number of low-count genes
+cat("Number of low-count genes (counts below", threshold, "in fewer than", min_samples, "samples):", num_low_count_genes, "\n")
+
+# Optionally, view the names of low-count genes
+low_count_gene_names <- rownames(counts)[low_count_genes]
+head(low_count_gene_names)  # Show the first few low-count gene names
+
+```
+```{r}
+plotDispEsts(dds_no_empty1)
+
+```
+
+```{r}
+plotDispEsts(dds_full)
+```
+filter the significant genes <0.05
+```{r}
+# Define the input path for the annotated and filtered files
+input_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"
+
+# Define a function to read, clean, filter, and save significant genes
+filter_significant_genes <- function(file_name, output_suffix = "_significant.csv") {
+  # Construct full file path
+  file_path <- file.path(input_path, file_name)
+  
+  # Read the annotated and filtered results file
+  results_df <- read.csv(file_path, row.names = 1)
+  
+  # Remove rows with NA values in critical columns (ENSEMBL and padj)
+  results_df_clean <- results_df[complete.cases(results_df[c("ENSEMBL", "padj")]), ]
+  
+  # Filter genes with adjusted p-value < 0.05
+  significant_genes <- results_df_clean[results_df_clean$padj < 0.05, ]
+  
+  # Check how many significant genes were found
+  num_significant <- nrow(significant_genes)
+  cat("Number of significant genes in", file_name, ":", num_significant, "\n")
+  
+  # Save the filtered significant genes to a new CSV file
+  output_file <- sub(".csv", output_suffix, file_name)
+  write.csv(significant_genes, file = file.path(input_path, output_file), row.names = TRUE)
+  
+  cat("Significant genes have been saved to:", file.path(input_path, output_file), "\n")
+}
+
+# List of files to process
+files_to_process <- c(
+  "results_PB1_vs_Empty_no_empty1_annotated_filtered.csv",
+  "results_PB1_VHL_vs_Empty_no_empty1_annotated_filtered.csv",
+  "results_VHL_vs_Empty_no_empty1_annotated_filtered.csv",
+  "results_PB1_vs_Empty_full_annotated_filtered.csv",
+  "results_PB1_VHL_vs_Empty_full_annotated_filtered.csv",
+  "results_VHL_vs_Empty_full_annotated_filtered.csv"
+)
+
+# Apply the function to each file
+lapply(files_to_process, filter_significant_genes)
+
+```
+
+Heatmap of the top variance genes 
+
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(genefilter)
+library(pheatmap)
+```
+
+
+```{r}
+# Load necessary library
+library(DESeq2)
+
+# Assuming 'dds_full' is your DESeq2 object including Caki2_Empty_1
+# Assuming 'dds_no_empty1' is your DESeq2 object without Caki2_Empty_1
+
+# Define the threshold for filtering
+count_threshold <- 10
+min_samples <- ncol(dds_full) / 2  # At least half the samples
+
+# Pre-filter the full dataset
+keep_genes_full <- rowSums(counts(dds_full) >= count_threshold) >= min_samples
+dds_full_filtered <- dds_full[keep_genes_full, ]
+
+# Pre-filter the dataset without Caki2_Empty_1
+keep_genes_no_empty1 <- rowSums(counts(dds_no_empty1) >= count_threshold) >= min_samples
+dds_no_empty1_filtered <- dds_no_empty1[keep_genes_no_empty1, ]
+
+# Perform variance-stabilizing transformation on the filtered datasets
+vsd_full <- vst(dds_full_filtered, blind = FALSE)
+vsd_no_empty1 <- vst(dds_no_empty1_filtered, blind = FALSE)
+
+# Load your annotated data that includes Ensembl IDs and Gene Names
+annotations_full <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_full_annotated_filtered.csv", row.names = 1)
+annotations_no_empty1 <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_no_empty1_annotated_filtered.csv", row.names = 1)
+
+# Create mapping of Ensembl IDs (without version numbers) to Gene Names
+gene_name_mapping_full <- annotations_full$SYMBOL
+names(gene_name_mapping_full) <- sub("\\..*", "", annotations_full$ENSEMBL)  # Remove version numbers
+
+gene_name_mapping_no_empty1 <- annotations_no_empty1$SYMBOL
+names(gene_name_mapping_no_empty1) <- sub("\\..*", "", annotations_no_empty1$ENSEMBL)  # Remove version numbers
+
+# Identify the top 20 most variable genes for both datasets
+topVarGenes_full <- head(order(rowVars(assay(vsd_full)), decreasing = TRUE), 30)
+topVarGenes_no_empty1 <- head(order(rowVars(assay(vsd_no_empty1)), decreasing = TRUE), 30)
+
+# Extract the expression matrices
+mat_full <- assay(vsd_full)[topVarGenes_full, ]
+mat_no_empty1 <- assay(vsd_no_empty1)[topVarGenes_no_empty1, ]
+
+# Clean Ensembl IDs by removing version numbers
+rownames(mat_full) <- sub("\\..*", "", rownames(mat_full))  # Remove version numbers
+rownames(mat_no_empty1) <- sub("\\..*", "", rownames(mat_no_empty1))  # Remove version numbers
+
+# Replace Ensembl IDs with Gene Names using the mapping
+rownames(mat_full) <- gene_name_mapping_full[rownames(mat_full)]
+rownames(mat_no_empty1) <- gene_name_mapping_no_empty1[rownames(mat_no_empty1)]
+
+# Handle missing mappings (replace NA with original Ensembl ID without version)
+rownames(mat_full)[is.na(rownames(mat_full))] <- sub("\\..*", "", rownames(mat_full)[is.na(rownames(mat_full))])
+rownames(mat_no_empty1)[is.na(rownames(mat_no_empty1))] <- sub("\\..*", "", rownames(mat_no_empty1)[is.na(rownames(mat_no_empty1))])
+
+# Center the matrices by subtracting row means
+mat_full <- mat_full - rowMeans(mat_full)
+mat_no_empty1 <- mat_no_empty1 - rowMeans(mat_no_empty1)
+
+# Create annotation data frames
+anno_full <- as.data.frame(colData(vsd_full)[, c("condition", "batch")])
+anno_no_empty1 <- as.data.frame(colData(vsd_no_empty1)[, c("condition", "batch")])
+
+# Generate the heatmap for the full dataset with gene names
+pheatmap(mat_full, 
+         annotation_col = anno_full,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         main = "Heatmap of Top 30 Variable Genes (Full Dataset)",
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+         fontsize_row = 8
+)
+
+# Generate the heatmap for the dataset without Caki2_Empty_1 with gene names
+pheatmap(mat_no_empty1, 
+         annotation_col = anno_no_empty1,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         main = "Heatmap of Top 30 Variable Genes (No Caki2_Empty_1)",
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+         fontsize_row = 4
+)
+
+```
