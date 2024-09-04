@@ -1,0 +1,95 @@
+# Load necessary libraries
+library(DESeq2)
+library(glmpca)
+library(ggplot2)
+
+# Function to perform Generalized PCA (GLM-PCA) and plot results
+perform_glmpca <- function(dds, title_prefix) {
+  gpca <- glmpca(counts(dds), L = 2)
+  gpca_data <- as.data.frame(gpca$factors)
+  gpca_data$condition <- colData(dds)$condition  # Adjust with actual column names
+  gpca_data$batch <- colData(dds)$batch          # Adjust with actual column names
+  
+  plot <- ggplot(gpca_data, aes(x = dim1, y = dim2, color = condition, shape = batch)) +
+    geom_point(size = 3) +
+    coord_fixed() + 
+    ggtitle(paste(title_prefix, "GLM-PCA")) +
+    theme_minimal()
+  return(plot)
+}
+
+# Function to perform regular PCA using VST and plot results
+perform_pca <- function(dds, title_prefix, prefilter = TRUE) {
+  vst_data <- vst(dds, blind = TRUE)
+  
+  pca_data <- plotPCA(vst_data, intgroup = c("condition", "batch"), returnData = TRUE)
+  percentVar <- round(100 * attr(pca_data, "percentVar"))
+  
+  plot <- ggplot(pca_data, aes(x = PC1, y = PC2, color = condition, shape = batch)) +
+    geom_point(size = 3) +
+    coord_fixed() + 
+    labs(title = paste(title_prefix, "PCA"), 
+         x = paste0("PC1: ", percentVar[1], "% variance"),
+         y = paste0("PC2: ", percentVar[2], "% variance")) +
+    theme_minimal()
+  return(plot)
+}
+
+# Function to perform MDS and plot results
+perform_mds <- function(dds, title_prefix, prefilter = TRUE) {
+  vst_data <- vst(dds, blind = TRUE)
+  vst_counts <- assay(vst_data)
+  distance_matrix <- dist(t(vst_counts))
+  mds_result <- cmdscale(distance_matrix, k = 2)
+  
+  mds_data <- as.data.frame(mds_result)
+  colnames(mds_data) <- c("MDS1", "MDS2")
+  mds_data$condition <- colData(dds)$condition
+  mds_data$batch <- colData(dds)$batch
+  
+  plot <- ggplot(mds_data, aes(x = MDS1, y = MDS2, color = condition, shape = batch)) +
+    geom_point(size = 3) +
+    coord_fixed() + 
+    ggtitle(paste(title_prefix, "MDS")) +
+    theme_minimal()
+  return(plot)
+}
+
+# Apply functions to both filtered and non-filtered datasets
+# dds_full_filtered and dds_no_empty1_filtered are assumed to be your filtered datasets
+# dds_full and dds_no_empty1 are the non-filtered datasets
+
+# Filtered datasets
+plot_glmpca_full_filtered <- perform_glmpca(dds_full_filtered, "Filtered Full Data")
+plot_glmpca_no_empty_filtered <- perform_glmpca(dds_no_empty1_filtered, "Filtered No Caki2_Empty_1")
+
+plot_pca_full_filtered <- perform_pca(dds_full_filtered, "Filtered Full Data")
+plot_pca_no_empty_filtered <- perform_pca(dds_no_empty1_filtered, "Filtered No Caki2_Empty_1")
+
+plot_mds_full_filtered <- perform_mds(dds_full_filtered, "Filtered Full Data")
+plot_mds_no_empty_filtered <- perform_mds(dds_no_empty1_filtered, "Filtered No Caki2_Empty_1")
+
+# Non-filtered datasets
+plot_glmpca_full <- perform_glmpca(dds_full, "Full Data")
+plot_glmpca_no_empty <- perform_glmpca(dds_no_empty1, "No Caki2_Empty_1")
+
+plot_pca_full <- perform_pca(dds_full, "Full Data")
+plot_pca_no_empty <- perform_pca(dds_no_empty1, "No Caki2_Empty_1")
+
+plot_mds_full <- perform_mds(dds_full, "Full Data")
+plot_mds_no_empty <- perform_mds(dds_no_empty1, "No Caki2_Empty_1")
+
+# Print all plots for comparison
+print(plot_glmpca_full_filtered)
+print(plot_glmpca_no_empty_filtered)
+print(plot_pca_full_filtered)
+print(plot_pca_no_empty_filtered)
+print(plot_mds_full_filtered)
+print(plot_mds_no_empty_filtered)
+
+print(plot_glmpca_full)
+print(plot_glmpca_no_empty)
+print(plot_pca_full)
+print(plot_pca_no_empty)
+print(plot_mds_full)
+print(plot_mds_no_empty)
