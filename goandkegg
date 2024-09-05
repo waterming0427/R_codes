@@ -1,0 +1,429 @@
+# Load necessary libraries
+library(clusterProfiler)
+library(org.Hs.eg.db)  # For human; use the appropriate database for your organism
+# Install ReactomePA if not already installed
+if (!requireNamespace("ReactomePA", quietly = TRUE)) {
+  BiocManager::install("ReactomePA")
+}
+
+# Load necessary libraries
+library(ReactomePA)
+library(dplyr)
+
+```
+
+
+```{r}
+
+# Define the input path and load the significant results file
+input_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"  # Adjust the path to your directory
+file_name <- "results_VHL_vs_Empty_full_annotated_filtered_significant.csv"  # Example file
+results <- read.csv(file.path(input_path, file_name), row.names = 1)
+
+# Extract significant genes (e.g., SYMBOL column) and remove NAs
+sig_genes <- na.omit(results$SYMBOL)
+
+# Convert gene symbols to Entrez IDs for pathway analysis
+entrez_ids <- bitr(sig_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
+
+# Perform Over-Representation Analysis (ORA) for KEGG pathways
+ora_kegg <- enrichKEGG(gene = entrez_ids, organism = 'hsa', pvalueCutoff = 0.05)
+
+# Perform Over-Representation Analysis (ORA) for Reactome pathways
+ora_reactome <- enrichPathway(gene = entrez_ids, organism = 'human', pvalueCutoff = 0.05)
+
+# Visualize the results with dotplot
+dotplot(ora_kegg, showCategory = 10) + ggtitle("KEGG Pathway Enrichment - VHL vs Empty Full")
+dotplot(ora_reactome, showCategory = 10) + ggtitle("Reactome Pathway Enrichment - VHL vs Empty Full")
+
+# Repeat the process for other files as needed
+
+```
+```{r}
+
+# Load necessary libraries
+library(enrichplot)
+
+# Dot Plot: Visualizing KEGG pathway enrichment
+dotplot(ora_kegg, showCategory = 10) + ggtitle("KEGG Pathway Enrichment - Dot Plot")
+
+# Bar Plot: Visualizing KEGG pathway enrichment
+barplot(ora_kegg, showCategory = 10) + ggtitle("KEGG Pathway Enrichment - Bar Plot")
+
+# Cnetplot: Visualizing the connections between genes and pathways (for Reactome)
+cnetplot(ora_reactome, showCategory = 5) + ggtitle("Reactome Pathway - Category Network Plot")
+
+# Calculate pairwise term similarity matrix
+ora_reactome <- pairwise_termsim(ora_reactome)
+
+# Create the enrichment map using the pairwise similarity results
+emapplot(ora_reactome, showCategory = 10) + ggtitle("Reactome Pathway Enrichment Map")
+
+```
+```{r}
+# Install and load pathview if not already installed
+if (!requireNamespace("pathview", quietly = TRUE)) {
+  BiocManager::install("pathview")
+}
+
+# Load pathview
+library(pathview)
+```
+
+
+```{r}
+# Load necessary libraries
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+# Assuming you have a results data frame with 'SYMBOL' and 'log2FoldChange' columns
+# Load your results data frame (modify the path and filename as necessary)
+input_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"
+file_name <- "results_VHL_vs_Empty_full_annotated_filtered_significant.csv"  # Example file
+results <- read.csv(file.path(input_path, file_name), row.names = 1)
+
+# Check the first few rows of the results to ensure it has SYMBOL and log2FoldChange columns
+head(results)
+
+# Ensure your gene_fold_change object is correctly set up with Entrez IDs
+# Extract gene symbols and fold changes
+gene_symbols <- results$SYMBOL
+fold_changes <- results$log2FoldChange
+
+# Convert gene symbols to Entrez IDs using bitr from clusterProfiler
+entrez_conversion <- bitr(gene_symbols, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+# Merge fold changes with Entrez IDs, ensuring the correct match
+gene_fold_change <- merge(entrez_conversion, results, by.x = "SYMBOL", by.y = "SYMBOL")
+
+# Set up the gene_fold_change vector with Entrez IDs as names
+gene_fold_change_vector <- setNames(gene_fold_change$log2FoldChange, gene_fold_change$ENTREZID)
+
+# Remove NAs and ensure no issues with missing data
+gene_fold_change_vector <- na.omit(gene_fold_change_vector)
+
+# Check the corrected gene_fold_change_vector
+print(head(gene_fold_change_vector))
+head(ora_kegg)
+```
+
+```{r}
+# Define the output directory
+output_dir <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/Pathway"
+
+# Set the working directory to the output path
+setwd(output_dir)
+
+# Ensure there are no missing or incorrect values in the gene_fold_change_vector
+gene_fold_change_vector <- na.omit(gene_fold_change_vector)  # Remove NAs if any
+
+# Check the range and values in the gene_fold_change_vector to ensure they're appropriate
+print(summary(gene_fold_change_vector))
+
+# Specify the KEGG pathway ID you want to visualize
+kegg_pathway_id <- "hsa04066"  # Example pathway ID
+
+# Set color palette to avoid potential color-related errors
+color_palette <- colorRampPalette(c("blue", "white", "red"))(50)  # Blue for down, red for up-regulation
+
+# Use the corrected gene_fold_change_vector with pathview and specify additional parameters
+pathview(gene.data = gene_fold_change_vector,
+         pathway.id = kegg_pathway_id,  # Confirm the pathway ID is correct
+         species = "hsa",  # 'hsa' for human
+         gene.idtype = "ENTREZID",  # Specify the correct gene id type
+         out.suffix = "KEGG_Pathway_Visualization",
+         kegg.native = TRUE,  # Use KEGG's native view for visualization
+         low = "blue", high = "red", mid = "white",  # Set colors for fold change
+         na.col = "grey")  # Specify a color for NA values
+
+
+```
+
+```{r}
+# Load necessary libraries
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(pathview)
+library(ReactomePA)
+
+# Define the input path containing all files to process
+input_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"
+
+# List all significant results files in the directory with a specific pattern
+files <- list.files(input_path, pattern = "annotated_filtered_significant.csv", full.names = TRUE)
+
+# Function to process each file and display plots in R
+process_file <- function(file_path) {
+  # Load the results data frame
+  results <- read.csv(file_path, row.names = 1)
+  
+  # Extract significant genes (SYMBOL column) and remove NAs
+  sig_genes <- na.omit(results$SYMBOL)
+  
+  # Convert gene symbols to Entrez IDs for pathway analysis
+  entrez_conversion <- bitr(sig_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+  entrez_ids <- entrez_conversion$ENTREZID
+  
+  # Perform Over-Representation Analysis (ORA) for KEGG pathways
+  ora_kegg <- enrichKEGG(gene = entrez_ids, organism = 'hsa', pvalueCutoff = 0.05)
+  
+  # Perform Over-Representation Analysis (ORA) for Reactome pathways
+  ora_reactome <- enrichPathway(gene = entrez_ids, organism = 'human', pvalueCutoff = 0.05)
+  
+  # Visualize the KEGG pathway enrichment with dotplot
+  print(dotplot(ora_kegg, showCategory = 10) + 
+    ggtitle(paste("KEGG Pathway Enrichment -", basename(file_path))))
+  
+  # Visualize the Reactome pathway enrichment with dotplot
+  print(dotplot(ora_reactome, showCategory = 10) + 
+    ggtitle(paste("Reactome Pathway Enrichment -", basename(file_path))))
+  
+  # Visualize the KEGG pathway enrichment with barplot
+  print(barplot(ora_kegg, showCategory = 10) + 
+    ggtitle(paste("KEGG Pathway Enrichment - Bar Plot -", basename(file_path))))
+  
+  # Visualize Reactome connections with Cnetplot
+  print(cnetplot(ora_reactome, showCategory = 5) + 
+    ggtitle(paste("Reactome Pathway - Category Network Plot -", basename(file_path))))
+  
+  # Calculate pairwise term similarity matrix for Reactome
+  ora_reactome <- pairwise_termsim(ora_reactome)
+  
+  # Create the enrichment map for Reactome
+  print(emapplot(ora_reactome, showCategory = 10) + 
+    ggtitle(paste("Reactome Pathway Enrichment Map -", basename(file_path))))
+  
+  # Prepare gene fold change vector for Pathview
+  fold_changes <- results$log2FoldChange
+  gene_fold_change <- merge(entrez_conversion, results, by.x = "SYMBOL", by.y = "SYMBOL")
+  gene_fold_change_vector <- setNames(gene_fold_change$log2FoldChange, gene_fold_change$ENTREZID)
+  gene_fold_change_vector <- na.omit(gene_fold_change_vector)  # Remove NAs
+  
+  # Example pathway ID, adjust as needed for specific pathway visualization
+  kegg_pathway_id <- "hsa00100"  # Replace with relevant pathway ID
+  
+  # Use pathview to visualize the pathway with the gene fold change data
+  pathview(gene.data = gene_fold_change_vector,
+           pathway.id = kegg_pathway_id,
+           species = "hsa", 
+           gene.idtype = "ENTREZID",
+           out.suffix = paste("KEGG_Pathway_Visualization", basename(file_path), sep = "_"),
+           kegg.native = TRUE,
+           low = "blue", high = "red", mid = "white",
+           na.col = "grey")
+}
+
+# Apply the function to all files in the directory
+lapply(files, process_file)
+
+
+
+```
+
+```{r}
+
+```
+
+Significance Cutoffs:
+
+pvalueCutoff and qvalueCutoff are set to more stringent levels (0.01 and 0.05, respectively) to focus on highly significant terms.
+Gene Set Size Filtering:
+
+minGSSize = 10 excludes very small gene sets that may be too specific or noisy.
+maxGSSize = 500 excludes very large sets that may be too broad.
+Redundancy Reduction:
+
+The simplify() function reduces redundancy among GO terms by clustering similar terms based on their semantic similarity (cutoff = 0.7).
+```{r}
+# Load necessary libraries
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+
+# Define the input path containing all files to process
+input_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"
+
+# List all significant results files in the directory with a specific pattern
+files <- list.files(input_path, pattern = "annotated_filtered_significant.csv", full.names = TRUE)
+
+# Function to process each file and perform GO enrichment analysis
+process_file_go <- function(file_path) {
+  # Load the results data frame
+  results <- read.csv(file_path, row.names = 1)
+  
+  # Extract significant genes (SYMBOL column) and remove NAs
+  sig_genes <- na.omit(results$SYMBOL)
+  
+  # Convert gene symbols to Entrez IDs for GO pathway analysis
+  entrez_conversion <- bitr(sig_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+  entrez_ids <- entrez_conversion$ENTREZID
+  
+  # Perform GO Enrichment Analysis for Biological Process (BP), Molecular Function (MF), and Cellular Component (CC)
+  go_bp <- enrichGO(gene = entrez_ids, OrgDb = org.Hs.eg.db, ont = "BP", pvalueCutoff = 0.05, readable = TRUE)
+  go_mf <- enrichGO(gene = entrez_ids, OrgDb = org.Hs.eg.db, ont = "MF", pvalueCutoff = 0.05, readable = TRUE)
+  go_cc <- enrichGO(gene = entrez_ids, OrgDb = org.Hs.eg.db, ont = "CC", pvalueCutoff = 0.05, readable = TRUE)
+  
+  # Visualize the GO BP results with a dot plot
+  print(dotplot(go_bp, showCategory = 10) + 
+    ggtitle(paste("GOBiological Process", basename(file_path))))
+  
+  # Visualize the GO MF results with a dot plot
+  print(dotplot(go_mf, showCategory = 10) + 
+    ggtitle(paste("GOMolecular Function", basename(file_path))))
+  
+  # Visualize the GO CC results with a dot plot
+  print(dotplot(go_cc, showCategory = 10) + 
+    ggtitle(paste("GOCellular Component", basename(file_path))))
+}
+
+# Apply the function to all files in the directory
+lapply(files, process_file_go)
+
+```
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(DOSE)
+library(UpSetR)
+library(org.Hs.eg.db)
+library(dplyr)
+```
+
+```{r}
+# Load necessary libraries
+
+
+# Define the input paths for the three files to compare
+file1 <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv"
+file2 <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_no_empty1_annotated_filtered_significant.csv"
+file3 <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv"
+
+# Function to extract Entrez IDs from a file
+extract_entrez_ids <- function(file_path) {
+  results <- read.csv(file_path, row.names = 1)
+  sig_genes <- na.omit(results$SYMBOL)
+  entrez_conversion <- bitr(sig_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+  entrez_ids <- entrez_conversion$ENTREZID
+  return(entrez_ids)
+}
+
+# Extract Entrez IDs for each condition
+entrez_ids1 <- extract_entrez_ids(file1)
+entrez_ids2 <- extract_entrez_ids(file2)
+entrez_ids3 <- extract_entrez_ids(file3)
+
+# Combine the Entrez IDs into a list for comparison
+gene_list <- list(
+  PB1_VHL_vs_Empty = entrez_ids1, 
+  PB1_vs_Empty = entrez_ids2,
+  VHL_vs_Empty = entrez_ids3
+)
+
+# Perform GO enrichment comparison using compareCluster
+compare_go <- compareCluster(geneCluster = gene_list, 
+                             fun = "enrichGO", 
+                             OrgDb = org.Hs.eg.db, 
+                             ont = "BP", 
+                             pvalueCutoff = 0.05, 
+                             qvalueCutoff = 0.05, 
+                             readable = TRUE)
+
+# Extract enriched terms and convert to a data frame for upset plot
+terms_df <- compare_go@compareClusterResult %>%
+  select(Cluster, Description) %>%
+  distinct()
+
+# Create a list of GO terms for each condition
+terms_list <- split(terms_df$Description, terms_df$Cluster)
+
+# Convert the list of terms into a format suitable for UpSetR
+upset_data <- fromList(terms_list)
+
+# Plot the custom upset plot with three conditions
+upset(upset_data, 
+      sets = c("PB1_VHL_vs_Empty", "PB1_vs_Empty", "VHL_vs_Empty"),
+      order.by = "freq", 
+      main.bar.color = "steelblue",
+      matrix.color = "black",
+      sets.bar.color = c("red", "blue", "green"),
+      mainbar.y.label = "GO Terms Intersection",
+      sets.x.label = "GO Terms per Condition",
+      keep.order = TRUE)
+
+```
+
+```{r}
+# Load necessary libraries
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(dplyr)
+
+# Define the input paths for the three files to compare
+file1 <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv"
+file2 <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_no_empty1_annotated_filtered_significant.csv"
+file3 <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv"
+
+# Function to extract Entrez IDs from a file
+extract_entrez_ids <- function(file_path) {
+  results <- read.csv(file_path, row.names = 1)
+  sig_genes <- na.omit(results$SYMBOL)
+  entrez_conversion <- bitr(sig_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+  entrez_ids <- entrez_conversion$ENTREZID
+  return(entrez_ids)
+}
+
+# Extract Entrez IDs for each condition
+entrez_ids1 <- extract_entrez_ids(file1)
+entrez_ids2 <- extract_entrez_ids(file2)
+entrez_ids3 <- extract_entrez_ids(file3)
+
+# Combine the Entrez IDs into a list for comparison
+gene_list <- list(
+  PB1_VHL_vs_Empty = entrez_ids1, 
+  PB1_vs_Empty = entrez_ids2,
+  VHL_vs_Empty = entrez_ids3
+)
+
+# Perform GO enrichment comparison using compareCluster
+compare_go <- compareCluster(geneCluster = gene_list, 
+                             fun = "enrichGO", 
+                             OrgDb = org.Hs.eg.db, 
+                             ont = "BP", 
+                             pvalueCutoff = 0.05, 
+                             qvalueCutoff = 0.05, 
+                             readable = TRUE)
+
+# Extract enriched GO terms for each condition
+terms_df <- compare_go@compareClusterResult %>%
+  select(Cluster, Description) %>%
+  distinct()
+
+# Separate the GO terms by condition
+terms_pb1_vhl <- terms_df %>% filter(Cluster == "PB1_VHL_vs_Empty") %>% pull(Description)
+terms_pb1 <- terms_df %>% filter(Cluster == "PB1_vs_Empty") %>% pull(Description)
+terms_vhl <- terms_df %>% filter(Cluster == "VHL_vs_Empty") %>% pull(Description)
+
+# Identify shared and unique GO terms
+shared_terms <- Reduce(intersect, list(terms_pb1_vhl, terms_pb1, terms_vhl))
+unique_pb1_vhl <- setdiff(terms_pb1_vhl, union(terms_pb1, terms_vhl))
+unique_pb1 <- setdiff(terms_pb1, union(terms_pb1_vhl, terms_vhl))
+unique_vhl <- setdiff(terms_vhl, union(terms_pb1_vhl, terms_pb1))
+
+# Combine the results into a list for easy saving or viewing
+go_terms_list <- list(
+  Shared_Terms = shared_terms,
+  Unique_PB1_VHL_vs_Empty = unique_pb1_vhl,
+  Unique_PB1_vs_Empty = unique_pb1,
+  Unique_VHL_vs_Empty = unique_vhl
+)
+
+# Save the lists to CSV files
+write.csv(data.frame(Shared_Terms = shared_terms), "/Users/kathiexu/Desktop/RNAseq/test/Caki2/Shared_GO_Terms.csv", row.names = FALSE)
+write.csv(data.frame(Unique_PB1_VHL_vs_Empty = unique_pb1_vhl), "/Users/kathiexu/Desktop/RNAseq/test/Caki2/Unique_PB1_VHL_vs_Empty_GO_Terms.csv", row.names = FALSE)
+write.csv(data.frame(Unique_PB1_vs_Empty = unique_pb1), "/Users/kathiexu/Desktop/RNAseq/test/Caki2/Unique_PB1_vs_Empty_GO_Terms.csv", row.names = FALSE)
+write.csv(data.frame(Unique_VHL_vs_Empty = unique_vhl), "/Users/kathiexu/Desktop/RNAseq/test/Caki2/Unique_VHL_vs_Empty_GO_Terms.csv", row.names = FALSE)
+
+# Print a summary of the results
+print(go_terms_list)
