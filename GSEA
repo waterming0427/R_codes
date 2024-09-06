@@ -1,3 +1,4 @@
+#######pre-ranked
 1. Log2 Fold Change (log2FC):
 Description: Ranks genes purely based on the magnitude of fold change, from most upregulated to most downregulated.
 Advantages: Highlights the strongest changes in expression levels.
@@ -352,3 +353,126 @@ Description: Gene sets representing the cell type-specific expression from singl
 10. C9: COVID-19 Gene Sets
 Category Code: "C9"
 Description: Gene sets related to COVID-19, including genes responsive to SARS-CoV-2 infection
+########
+#########
+#########
+######### Standard rank
+
+# Load necessary libraries
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(msigdbr)
+library(fgsea)
+library(dplyr)
+library(ggplot2)
+
+# Step 1: Normalize the Filtered DESeq2 Object
+dds_no_empty1_filtered <- DESeq(dds_no_empty1_filtered)
+normalized_counts <- counts(dds_no_empty1_filtered, normalized = TRUE)
+
+# Step 2: Log-Transform the Normalized Counts (Optional but Recommended)
+log_norm_counts <- log2(normalized_counts + 1)
+
+# Convert the normalized counts to a data frame for easier manipulation
+log_norm_counts_df <- as.data.frame(log_norm_counts)
+
+# Step 3: Clean Ensembl IDs by Removing Version Numbers
+clean_ensembl_ids <- sub("\\..*$", "", rownames(log_norm_counts_df))
+log_norm_counts_df$CleanEnsemblID <- clean_ensembl_ids
+
+# Step 4: Map Ensembl IDs to ENTREZ IDs using clusterProfiler
+# Use bitr function from clusterProfiler for annotation
+mapping <- bitr(
+  clean_ensembl_ids,
+  fromType = "ENSEMBL",
+  toType = "ENTREZID",
+  OrgDb = org.Hs.eg.db
+)
+
+# Merge Mapping Results with Expression Data
+log_norm_counts_df <- merge(log_norm_counts_df, mapping, by.x = "CleanEnsemblID", by.y = "ENSEMBL", all.x = TRUE)
+
+# Remove Rows with Missing ENTREZ IDs
+log_norm_counts_df <- log_norm_counts_df %>%
+  filter(!is.na(ENTREZID))
+
+# Handle Duplicates by Averaging Expression Values for Duplicate ENTREZ IDs
+log_norm_counts_df <- log_norm_counts_df %>%
+  group_by(ENTREZID) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE)) %>%
+  ungroup()
+
+# Convert to a data frame and set ENTREZ IDs as row names
+log_norm_counts_df <- as.data.frame(log_norm_counts_df)
+rownames(log_norm_counts_df) <- log_norm_counts_df$ENTREZID
+log_norm_counts_df$ENTREZID <- NULL  # Remove ENTREZ ID column now set as row names
+
+# Step 5: Load Gene Sets from MSigDB (e.g., Hallmark Gene Sets)
+msigdb_gene_sets <- msigdbr(species = "Homo sapiens", category = "H") # 'H' for Hallmark pathways
+
+# Convert MSigDB to a list format suitable for clusterProfiler
+gene_set_list <- split(msigdb_gene_sets$entrez_gene, msigdb_gene_sets$gs_name)
+
+# Step 6: Define Phenotype Labels for GSEA
+# Subset Normalized Counts: Select columns corresponding to the Empty and VHL conditions
+vhl_vs_empty <- log_norm_counts_df[, c("Caki2_Empty_2", "Caki2_Empty_3", "Caki2_VHL_1", "Caki2_VHL_2", "Caki2_VHL_3")]
+
+# Define phenotype labels for GSEA (2 Empty and 3 VHL samples)
+sample_labels <- c(rep("Empty", 2), rep("VHL", 3))
+phenotype_labels <- factor(sample_labels, levels = c("Empty", "VHL"))
+
+# Step 7: Generate a ranked list using the mean expression values for ranking
+gene_ranks <- rowMeans(vhl_vs_empty)  # Use mean for ranking, can adjust to SNR or other methods
+ranked_gene_list <- sort(gene_ranks, decreasing = TRUE)  # Rank genes in descending order
+
+# Step 8: Run GSEA using fgseaMultilevel with adjusted scoreType
+gsea_results <- fgseaMultilevel(
+  pathways = gene_set_list,
+  stats = ranked_gene_list, # Use the ranked gene list
+  minSize = 10,
+  maxSize = 500,
+  scoreType = "std" # Adjust scoreType if needed based on ranking characteristics
+)
+
+# Step 9: View and Save GSEA Results
+print(gsea_results)
+plotGseaTable(gene_set_list, ranked_gene_list, gsea_results, gseaParam = 0.5)
+
+# Step 10: Extract top pathways based on adjusted p-value or NES (Normalized Enrichment Score)
+topPathways <- gsea_results[order(gsea_results$NES), ][1:10, ]
+
+# Step 11: Create a bar plot for the top 10 pathways
+ggplot(topPathways, aes(x = reorder(pathway, NES), y = NES)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +
+  labs(title = "Top 10 Enriched Pathways", x = "Pathway", y = "Normalized Enrichment Score (NES)") +
+  theme_minimal()
+
+```
+```{r}
+# Step 9: View and Save GSEA Results
+# Print GSEA results
+print(gsea_results)
+
+# Adjust the GSEA table to show only the top 5 pathways (you can change the number as needed)
+top_gene_sets <- head(order(gsea_results$NES, decreasing = TRUE), 5) # Select top 5 based on NES
+plotGseaTable(
+  gene_set_list[top_gene_sets], 
+  ranked_gene_list, 
+  gsea_results[top_gene_sets, ], 
+  gseaParam = 0.5
+)
+
+
+```
+
+
+```{r}
+# Bubble plot
+ggplot(gsea_results, aes(x = NES, y = reorder(pathway, NES), size = -log10(padj), color = padj < 0.05)) +
+  geom_point(alpha = 0.3) +
+  scale_color_manual(values = c("grey", "red")) +
+  scale_size_continuous(range = c(3, 8)) +
+  labs(title = "Bubble Plot of GSEA Results", x = "Normalized Enrichment Score (NES)", y = "Pathway") +
+  theme_minimal() +
+  theme(legend.position = "right")
