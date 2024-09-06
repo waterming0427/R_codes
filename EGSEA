@@ -1,0 +1,374 @@
+# Load necessary libraries
+library(DESeq2)
+library(org.Hs.eg.db)  # Replace with appropriate annotation database if not human
+library(limma)
+library(EGSEA)
+
+# Define paths
+output_dir <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/EGSEA"
+
+# Load your DESeq2 object
+dds <- dds_no_empty1  # Assuming dds_noempty1 is already loaded
+
+# Extract raw counts from DESeq2 object
+raw_counts <- counts(dds, normalized = FALSE)
+
+# Filter out low-count genes (e.g., keep genes with a minimum of 10 counts across all samples)
+filtered_counts <- raw_counts[rowSums(raw_counts >= 10) > 0, ]
+
+# Save the filtered counts to a CSV file
+write.csv(filtered_counts, file.path(output_dir, "caki2_no_empty1_filtered_counts_matrix.csv"), row.names = TRUE)
+
+```
+
+
+```{r}
+# Load necessary libraries
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(dplyr)
+library(tibble)
+
+# Set the working directory
+output_dir <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/EGSEA"
+
+# Load your complete filtered counts table
+# Adjust the file name and path as needed
+counts_file <- file.path(output_dir, "caki2_no_empty1_filtered_counts_matrix.csv") # Replace with your actual file path
+filtered_counts <- read.csv(counts_file, row.names = 1, check.names = FALSE)
+
+# Step 1: Remove the version numbers from Ensembl IDs
+row.names(filtered_counts) <- gsub("\\..*", "", row.names(filtered_counts))
+
+# Step 2: Convert Ensembl IDs to Entrez IDs using clusterProfiler
+# Extract Ensembl IDs
+ensembl_ids <- row.names(filtered_counts)
+
+# Map Ensembl IDs to Entrez IDs and symbols
+symbols_mapping <- bitr(ensembl_ids, fromType = "ENSEMBL", toType = c("ENTREZID", "SYMBOL"), OrgDb = org.Hs.eg.db)
+
+# Check unmapped Ensembl IDs
+unmapped_ids <- setdiff(ensembl_ids, symbols_mapping$ENSEMBL)
+cat("Unmapped Ensembl IDs:\n", unmapped_ids, "\n")
+
+# Handle 1:many mappings by keeping the first occurrence of each Ensembl ID
+symbols_mapping <- symbols_mapping[!duplicated(symbols_mapping$ENSEMBL), ]
+
+# Step 3: Merge the mapped data back with the counts table
+# Convert row names to a column and merge
+filtered_counts_mapped <- filtered_counts %>%
+  rownames_to_column("ENSEMBL") %>%  # Convert row names to a column
+  inner_join(symbols_mapping, by = "ENSEMBL") %>%  # Merge with mapping results
+  select(-ENSEMBL) %>%  # Remove the original Ensembl column if not needed
+  distinct()  # Remove duplicate rows if necessary
+
+# Save the final counts table with Entrez IDs
+write.csv(filtered_counts_mapped, file.path(output_dir, "caki2_no_empty1_filtered_counts_matrix_entrez.csv"), row.names = FALSE)
+
+# Print the head of the final mapped data to verify
+print(head(filtered_counts_mapped))
+
+
+```
+```{r}
+# Load the counts data (modify path as needed)
+counts <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/EGSEA/caki2_no_empty1_filtered_counts_matrix_entrez.csv")
+
+# Ensure that counts matrix has correct structure by removing SYMBOL column
+counts_matrix <- counts[, -which(names(counts) %in% c("SYMBOL"))]  # Remove SYMBOL column
+
+# Check for duplicates in the ENTREZID column
+if (any(duplicated(counts_matrix$ENTREZID))) {
+  # Calculate the average for duplicate ENTREZID rows using the updated approach
+  counts_matrix <- counts_matrix %>%
+    group_by(ENTREZID) %>%
+    summarise(across(everything(), ~ mean(.x, na.rm = TRUE))) %>%
+    ungroup() %>%
+    as.data.frame()  # Convert to a standard data frame
+}
+
+# Set ENTREZID as row names
+rownames(counts_matrix) <- counts_matrix$ENTREZID
+
+# Remove the ENTREZID column after setting row names
+counts_matrix <- counts_matrix[, -which(names(counts_matrix) %in% c("ENTREZID"))]
+
+# Convert counts to a numeric matrix
+counts_matrix <- as.matrix(counts_matrix)
+
+# Verify the structure of the counts matrix
+print(head(counts_matrix))
+
+write.csv(counts_matrix, file.path(output_dir, "caki2_no_empty1_filtered_counts_matrix_entrez_fixed.csv"), row.names = FALSE)
+```
+
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tibble)
+
+# Define the input path and load the counts file
+output_dir <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/EGSEA"
+counts_file <- file.path(output_dir, "caki2_no_empty1_filtered_counts_matrix_entrez.csv")
+counts <- read.csv(counts_file)
+
+# Check for duplicates in ENTREZID
+print(sum(duplicated(counts$ENTREZID)))
+
+# Average counts for duplicate ENTREZIDs
+counts_averaged <- counts %>%
+  group_by(ENTREZID) %>%
+  summarise(across(starts_with("Caki2"), mean, na.rm = TRUE),  # Averaging counts
+            SYMBOL = first(SYMBOL)) %>%  # Retain SYMBOL for reference
+  ungroup()
+
+# Set ENTREZID as row names and remove SYMBOL column
+counts_matrix <- counts_averaged %>%
+  column_to_rownames("ENTREZID") %>%
+  select(-SYMBOL)
+
+# Save the processed counts matrix (if needed)
+write.csv(counts_matrix, file.path(output_dir, "caki2_no_empty1_processed_counts_matrix.csv"))
+
+# Now proceed with EGSEA analysis using the processed counts matrix
+# Create DGEList object
+dge <- DGEList(counts = counts_matrix)
+dge <- calcNormFactors(dge)
+
+# Create a design matrix
+design <- model.matrix(~ 0 + factor(c(rep("Empty", 2), rep("PB1", 3), rep("VHL", 3), rep("PB1_VHL", 2))))
+colnames(design) <- c("Empty", "PB1", "VHL", "PB1_VHL")
+
+# Filter lowly expressed genes
+keep <- filterByExpr(dge, design)
+dge <- dge[keep, , keep.lib.sizes = FALSE]
+
+# Voom transformation
+v <- voom(dge, design)
+
+# Fit linear model and define contrasts
+fit <- lmFit(v, design)
+contrast_matrix <- makeContrasts(
+  PB1_vs_Empty = PB1 - Empty,
+  VHL_vs_Empty = VHL - Empty,
+  PB1_VHL_vs_Empty = PB1_VHL - Empty,
+  levels = design
+)
+fit_contrasts <- contrasts.fit(fit, contrast_matrix)
+fit_contrasts <- eBayes(fit_contrasts)
+
+# Build gene set index (MSigDB Hallmark and KEGG pathways)
+gsdb <- buildIdx(
+  entrezIDs = rownames(dge),
+  species = "human",
+  msigdb.gsets = c("h"),  # Hallmark gene sets
+  kegg = TRUE
+)
+
+# Define base GSEA methods (excluding 'roast')
+base_methods <- egsea.base()[-grep("roast", egsea.base())]
+
+# Run EGSEA
+egsea_results <- egsea(
+  dge = dge,                          # DGEList object
+  design = design,                    # Experimental design matrix
+  contrasts = contrast_matrix,        # Contrast matrix
+  gs.annots = gsdb,                   # Gene set annotations
+  baseGSEAs = base_methods,           # Base methods for GSEA
+  combineMethod = "fisher",           # Method for combining results
+  report = TRUE,                      # Generate detailed reports
+  num.threads = 4,                    # Use multiple threads
+  output.dir = output_dir             # Output directory
+)
+
+# View results
+print(egsea_results)
+
+# Plot top enriched pathways
+plot(egsea_results, top = 20)  # Display the top 20 enriched pathways
+
+
+```
+
+```{r}
+# Build gene set index (MSigDB Hallmark and KEGG pathways)
+gsdb <- buildIdx(
+  entrezIDs = rownames(dge),
+  species = "human",
+  msigdb.gsets = c("h"),  # Specify MSigDB categories
+  kegg.updated = TRUE     # Update KEGG pathways
+)
+
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(edgeR)
+library(limma)
+library(EGSEA)
+library(EGSEAdata)
+
+# Define the input path and load the counts file
+output_dir <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/EGSEA"
+counts_file <- file.path(output_dir, "caki2_no_empty1_filtered_counts_matrix_entrez.csv")
+counts <- read.csv(counts_file)
+
+# Average counts for duplicate ENTREZIDs
+counts_averaged <- counts %>%
+  group_by(ENTREZID) %>%
+  summarise(across(starts_with("Caki2"), mean, na.rm = TRUE),  # Averaging counts
+            SYMBOL = first(SYMBOL)) %>%  # Retain SYMBOL for reference
+  ungroup()
+
+# Set ENTREZID as row names and remove SYMBOL column
+counts_matrix <- counts_averaged %>%
+  column_to_rownames("ENTREZID") %>%
+  select(-SYMBOL)
+
+# Create DGEList object
+dge <- DGEList(counts = counts_matrix)
+dge <- calcNormFactors(dge)
+
+# Create a design matrix
+design <- model.matrix(~ 0 + factor(c(rep("Empty", 2), rep("PB1", 3), rep("VHL", 3), rep("PB1_VHL", 2))))
+colnames(design) <- c("Empty", "PB1", "VHL", "PB1_VHL")
+
+# Filter lowly expressed genes
+keep <- filterByExpr(dge, design)
+dge <- dge[keep, , keep.lib.sizes = FALSE]
+
+# Voom transformation
+v <- voom(dge, design)
+
+# Fit linear model and define contrasts
+fit <- lmFit(v, design)
+contrast_matrix <- makeContrasts(
+  PB1_vs_Empty = PB1 - Empty,
+  VHL_vs_Empty = VHL - Empty,
+  PB1_VHL_vs_Empty = PB1_VHL - Empty,
+  levels = design
+)
+fit_contrasts <- contrasts.fit(fit, contrast_matrix)
+fit_contrasts <- eBayes(fit_contrasts)
+
+# Build gene set indexes for EGSEA (MSigDB Hallmark and KEGG pathways)
+gsdb <- buildIdx(
+  entrezIDs = rownames(dge),
+  species = "human",
+  msigdb.gsets = c("h", "c2"), # Adjust as needed: 'h' for Hallmark, 'c2' for curated pathways
+  go.part = TRUE,
+  kegg.updated = TRUE # Set TRUE if you want the most recent KEGG pathways
+)
+
+# Define base GSEA methods (excluding 'roast')
+base_methods <- egsea.base()[-grep("roast", egsea.base())]
+
+# Run EGSEA with corrected arguments
+egsea_results <- egsea(
+  voom = v,                          # Voom object
+  contrasts = contrast_matrix,       # Contrast matrix
+  gs.annots = gsdb,                  # Gene set annotations
+  baseGSEAs = base_methods,          # Base methods for GSEA
+  combineMethod = "fisher",          # Method for combining results
+  report = TRUE,                     # Generate detailed reports
+  num.threads = 4,                   # Use multiple threads
+  output.prefix = output_dir         # Output prefix
+)
+
+# View results
+print(egsea_results)
+
+# Plot top enriched pathways
+plot(egsea_results, top = 20)  # Display the top 20 enriched pathways
+
+
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tibble)
+library(edgeR)
+library(limma)
+library(EGSEA)
+library(EGSEAdata)
+
+# Define the input path and load the counts file
+output_dir <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/EGSEA"
+counts_file <- file.path(output_dir, "caki2_no_empty1_filtered_counts_matrix_entrez.csv")
+counts <- read.csv(counts_file)
+
+# Average counts for duplicate ENTREZIDs
+counts_averaged <- counts %>%
+  group_by(ENTREZID) %>%
+  summarise(across(starts_with("Caki2"), mean, na.rm = TRUE),  # Averaging counts
+            SYMBOL = first(SYMBOL)) %>%  # Retain SYMBOL for reference
+  ungroup()
+
+# Set ENTREZID as row names and remove SYMBOL column
+counts_matrix <- counts_averaged %>%
+  column_to_rownames("ENTREZID") %>%
+  select(-SYMBOL)
+
+# Save the processed counts matrix (if needed)
+write.csv(counts_matrix, file.path(output_dir, "caki2_no_empty1_processed_counts_matrix.csv"))
+
+# Create DGEList object
+dge <- DGEList(counts = counts_matrix)
+dge <- calcNormFactors(dge)
+
+# Create a design matrix
+design <- model.matrix(~ 0 + factor(c(rep("Empty", 2), rep("PB1", 3), rep("VHL", 3), rep("PB1_VHL", 2))))
+colnames(design) <- c("Empty", "PB1", "VHL", "PB1_VHL")
+
+# Filter lowly expressed genes
+keep <- filterByExpr(dge, design)
+dge <- dge[keep, , keep.lib.sizes = FALSE]
+
+# Voom transformation
+v <- voom(dge, design)
+
+# Fit linear model and define contrasts
+fit <- lmFit(v, design)
+contrast_matrix <- makeContrasts(
+  PB1_vs_Empty = PB1 - Empty,
+  VHL_vs_Empty = VHL - Empty,
+  PB1_VHL_vs_Empty = PB1_VHL - Empty,
+  levels = design
+)
+fit_contrasts <- contrasts.fit(fit, contrast_matrix)
+fit_contrasts <- eBayes(fit_contrasts)
+
+# Build gene set indexes for EGSEA (MSigDB Hallmark and KEGG pathways)
+gsdb <- buildIdx(
+  entrezIDs = rownames(dge),    # Use ENTREZ IDs from your data
+  species = "human",            # Specify species
+  msigdb.gsets = c("h"),        # Specify desired MSigDB collections, e.g., Hallmark
+  gsdb.gsets = "none",          # Exclude GeneSetDB if not needed
+  go.part = FALSE,              # Adjust if you want GO terms partitioned
+  kegg.exclude = "all"          # Exclude all KEGG pathways
+)
+
+# Define base GSEA methods (excluding 'roast')
+base_methods <- egsea.base()[-grep("roast", egsea.base())]
+
+# Run EGSEA
+# Run EGSEA with pathway maps disabled
+egsea_results <- egsea(
+  voom.results = v,                   # Voom-transformed data
+  contrasts = contrast_matrix,        # Contrast matrix
+  gs.annots = gsdb,                   # Gene set annotations
+  baseGSEAs = base_methods,           # Base methods for GSEA
+  combineMethod = "fisher",           # Method for combining results
+  report = TRUE,                      # Generate detailed reports
+  num.threads = 3                    # Use multiple threads
+                 
+)
+
+
+# View results
+print(egsea_results)
+
+generateReport(egsea_results, number = 20, report.dir = "/Users/kathiexu/Desktop/RNAseq/test/Caki2/EGSEA")
