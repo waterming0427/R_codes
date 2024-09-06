@@ -1,0 +1,354 @@
+1. Log2 Fold Change (log2FC):
+Description: Ranks genes purely based on the magnitude of fold change, from most upregulated to most downregulated.
+Advantages: Highlights the strongest changes in expression levels.
+Limitations: Does not account for the variability or statistical significance of the changes.
+When to Use: When you are primarily interested in the largest changes in expression, regardless of statistical confidence.
+2. Statistical Value (e.g., Wald or t-statistic):
+Description: Ranks genes based on the test statistic from the differential expression analysis (e.g., Wald statistic from DESeq2, t-statistic from limma).
+Advantages: Accounts for both fold change and variability, providing a balanced measure of differential expression.
+Limitations: May not rank large fold changes highly if they are variable.
+When to Use: When you want a ranking that balances fold change and variability.
+3. Signed P-value (Fold Change Weighted):
+Description: Ranks genes by multiplying the sign of the fold change by the negative log of the p-value. This emphasizes both the direction and the confidence of differential expression.
+Formula: 
+Signed score = −log⁡10(p-value)×sign(log2FC)
+Advantages: Emphasizes genes with strong and statistically significant changes.
+Limitations: Small p-values can dominate the ranking even if fold changes are small.
+When to Use: When you want to account for both the direction of change and its statistical significance.
+4. Adjusted P-value (padj):
+Description: Ranks genes based on adjusted p-values, which correct for multiple testing.
+Advantages: Prioritizes statistically significant genes while controlling for false discovery.
+Limitations: May not emphasize large fold changes if they are not statistically significant.
+When to Use: When the statistical significance is the primary concern.
+5. Combined Score (Rank Product or Stouffer's Method):
+Description: Combines multiple rankings (e.g., fold change and p-value) using methods like rank product or Stouffer's Z-score method.
+Advantages: Provides a composite score that accounts for both magnitude and significance.
+Limitations: Computationally more complex and may require custom implementations.
+When to Use: When you want a holistic ranking that balances multiple aspects of the data.
+
+```{r}
+# Load necessary libraries
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(fgsea)
+library(msigdbr)
+library(dplyr)
+library(ggplot2)
+
+# Define the input path and load the results file
+input_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"  # Adjust the path as needed
+file_name <- "results_PB1_VHL_vs_Empty_no_empty1_annotated_filtered.csv"
+results <- read.csv(file.path(input_path, file_name), row.names = 1)
+
+# Remove rows with NA values
+results <- na.omit(results)
+
+# Calculate the signed p-value
+results <- results %>%
+  mutate(signed_p = -log10(pvalue) * sign(log2FoldChange)) %>%
+  arrange(desc(signed_p))  # Rank by signed p-value score
+
+# Convert gene symbols to Entrez IDs
+entrez_conversion <- bitr(results$SYMBOL, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+# Address 1:many mapping by keeping only the first occurrence of each gene
+entrez_conversion <- entrez_conversion[!duplicated(entrez_conversion$SYMBOL), ]
+
+# Merge Entrez IDs with the ranked data
+results <- merge(results, entrez_conversion, by.x = "SYMBOL", by.y = "SYMBOL")
+
+# Create a named vector for fgsea, with signed_p as values and ENTREZID as names
+ranked_list <- setNames(results$signed_p, results$ENTREZID)
+
+# Remove any non-finite values from the ranked_list
+ranked_list <- ranked_list[is.finite(ranked_list)]
+
+# Handle ties by adding a small random noise to break ties
+ranked_list <- ranked_list + runif(length(ranked_list), -1e-5, 1e-5)
+
+# Remove duplicate gene names if any exist
+ranked_list <- ranked_list[!duplicated(names(ranked_list))]
+
+# Retrieve MSigDB gene sets for human (e.g., Hallmark collection)
+msigdb_genesets <- msigdbr(species = "Homo sapiens", category = "H")  # 'H' for Hallmark
+msigdb_list <- split(x = msigdb_genesets$entrez_gene, f = msigdb_genesets$gs_name)
+
+# Perform GSEA using fgseaMultilevel
+fgsea_results <- fgseaMultilevel(
+  pathways = msigdb_list,
+  stats = ranked_list,
+  minSize = 15,    # Minimum gene set size
+  maxSize = 500    # Maximum gene set size
+)
+
+# View the top enriched pathways
+print(head(fgsea_results))
+
+# Generate a GSEA summary plot using plotGseaTable
+top_pathways <- fgsea_results %>%
+  arrange(padj) %>%
+  head(10)  # Adjust the number of top pathways displayed as needed
+
+plotGseaTable(
+  pathways = msigdb_list[top_pathways$pathway],  # Subset the pathways for the top results
+  stats = ranked_list,                          # Use the ranked list
+  fgseaRes = top_pathways,                      # Results of GSEA for these pathways
+  gseaParam = 0.5                               # Adjust for better visualization
+)
+
+# Optional: Bar plot to visualize the top pathways
+ggplot(top_pathways, aes(reorder(pathway, -NES), NES)) +
+  geom_col(aes(fill = padj < 0.05)) +
+  coord_flip() +
+  labs(x = "Pathway", y = "Normalized Enrichment Score (NES)", title = "Top GSEA Pathways") +
+  theme_minimal() +
+  scale_fill_manual(values = c("TRUE" = "red", "FALSE" = "grey")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# View the top enriched pathways
+print(head(fgsea_results))
+
+# Optional: Visualize the results with a plot
+library(ggplot2)
+ggplot(fgsea_results, aes(reorder(pathway, -NES), NES)) +
+  geom_col(aes(fill = padj < 0.05)) +
+  coord_flip() +
+  labs(x = "Pathway", y = "Normalized Enrichment Score (NES)", title = "GSEA Results") +
+  theme_minimal()
+
+```
+The Normalized Enrichment Score (NES) is a key metric in Gene Set Enrichment Analysis (GSEA). It adjusts the raw enrichment score (ES) to account for differences in gene set sizes and variations in the data. Here’s a breakdown of what it represents:
+
+Enrichment Score (ES): This is the primary statistic that reflects the degree to which a gene set is overrepresented at the top or bottom of a ranked list of genes. It is calculated by walking down the list of genes, increasing a running-sum statistic when a gene is in the gene set and decreasing it when it is not.
+Normalization: The ES is normalized to account for the size of the gene set, which allows for comparison between gene sets of different sizes. This is done by dividing the ES by the mean of the ESs obtained from all random permutations of the gene set.
+```{r}
+# Select a specific pathway for enrichment plot
+selected_pathway <- "HALLMARK_INTERFERON_GAMMA_RESPONSE"  # Adjust the pathway name as needed
+
+# Check if the selected pathway is in the results
+if (selected_pathway %in% fgsea_results$pathway) {
+  # Plot the enrichment for the selected pathway
+  plotEnrichment(
+    pathway = msigdb_list[[selected_pathway]],  # Use the gene set from MSigDB
+    stats = ranked_list                         # Ranked gene list
+  ) + ggtitle(paste("Enrichment Plot for", selected_pathway))
+} else {
+  cat("Selected pathway is not found in the results. Please check the pathway name.")
+}
+```
+
+```{r}
+
+# Define the input path and load the results file
+input_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"  # Adjust the path as needed
+file_name <- "results_PB1_vs_Empty_no_empty1_annotated_filtered.csv"
+results <- read.csv(file.path(input_path, file_name), row.names = 1)
+
+# Remove rows with NA values
+results <- na.omit(results)
+
+# Calculate the signed p-value
+results <- results %>%
+  mutate(signed_p = -log10(pvalue) * sign(log2FoldChange)) %>%
+  arrange(desc(signed_p))  # Rank by signed p-value score
+
+# Convert gene symbols to Entrez IDs
+entrez_conversion <- bitr(results$SYMBOL, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+# Address 1:many mapping by keeping only the first occurrence of each gene
+entrez_conversion <- entrez_conversion[!duplicated(entrez_conversion$SYMBOL), ]
+
+# Merge Entrez IDs with the ranked data
+results <- merge(results, entrez_conversion, by.x = "SYMBOL", by.y = "SYMBOL")
+
+# Create a named vector for fgsea, with signed_p as values and ENTREZID as names
+ranked_list <- setNames(results$signed_p, results$ENTREZID)
+
+# Remove any non-finite values from the ranked_list
+ranked_list <- ranked_list[is.finite(ranked_list)]
+
+# Handle ties by adding a small random noise to break ties
+ranked_list <- ranked_list + runif(length(ranked_list), -1e-5, 1e-5)
+
+# Remove duplicate gene names if any exist
+ranked_list <- ranked_list[!duplicated(names(ranked_list))]
+
+# Retrieve MSigDB gene sets for human (e.g., Hallmark collection)
+msigdb_genesets <- msigdbr(species = "Homo sapiens", category = "H")  # 'H' for Hallmark
+msigdb_list <- split(x = msigdb_genesets$entrez_gene, f = msigdb_genesets$gs_name)
+
+# Perform GSEA using fgseaMultilevel
+fgsea_results <- fgseaMultilevel(
+  pathways = msigdb_list,
+  stats = ranked_list,
+  minSize = 15,    # Minimum gene set size
+  maxSize = 500    # Maximum gene set size
+)
+
+# View the top enriched pathways
+print(head(fgsea_results))
+
+# Generate a GSEA summary plot using plotGseaTable
+top_pathways <- fgsea_results %>%
+  arrange(padj) %>%
+  head(10)  # Adjust the number of top pathways displayed as needed
+
+plotGseaTable(
+  pathways = msigdb_list[top_pathways$pathway],  # Subset the pathways for the top results
+  stats = ranked_list,                          # Use the ranked list
+  fgseaRes = top_pathways,                      # Results of GSEA for these pathways
+  gseaParam = 0.5                               # Adjust for better visualization
+)
+
+# Optional: Bar plot to visualize the top pathways
+ggplot(top_pathways, aes(reorder(pathway, -NES), NES)) +
+  geom_col(aes(fill = padj < 0.05)) +
+  coord_flip() +
+  labs(x = "Pathway", y = "Normalized Enrichment Score (NES)", title = "Top GSEA Pathways") +
+  theme_minimal() +
+  scale_fill_manual(values = c("TRUE" = "red", "FALSE" = "grey")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# View the top enriched pathways
+print(head(fgsea_results))
+
+# Optional: Visualize the results with a plot
+library(ggplot2)
+ggplot(fgsea_results, aes(reorder(pathway, -NES), NES)) +
+  geom_col(aes(fill = padj < 0.05)) +
+  coord_flip() +
+  labs(x = "Pathway", y = "Normalized Enrichment Score (NES)", title = "GSEA Results") +
+  theme_minimal()
+
+```
+```{r}
+# Define the input path and load the results file
+input_path <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2"  # Adjust the path as needed
+file_name <- "results_VHL_vs_Empty_no_empty1_annotated_filtered.csv"
+results <- read.csv(file.path(input_path, file_name), row.names = 1)
+
+# Remove rows with NA values
+results <- na.omit(results)
+
+# Calculate the signed p-value
+results <- results %>%
+  mutate(signed_p = -log10(pvalue) * sign(log2FoldChange)) %>%
+  arrange(desc(signed_p))  # Rank by signed p-value score
+
+# Convert gene symbols to Entrez IDs
+entrez_conversion <- bitr(results$SYMBOL, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+# Address 1:many mapping by keeping only the first occurrence of each gene
+entrez_conversion <- entrez_conversion[!duplicated(entrez_conversion$SYMBOL), ]
+
+# Merge Entrez IDs with the ranked data
+results <- merge(results, entrez_conversion, by.x = "SYMBOL", by.y = "SYMBOL")
+
+# Create a named vector for fgsea, with signed_p as values and ENTREZID as names
+ranked_list <- setNames(results$signed_p, results$ENTREZID)
+
+# Remove any non-finite values from the ranked_list
+ranked_list <- ranked_list[is.finite(ranked_list)]
+
+# Handle ties by adding a small random noise to break ties
+ranked_list <- ranked_list + runif(length(ranked_list), -1e-5, 1e-5)
+
+# Remove duplicate gene names if any exist
+ranked_list <- ranked_list[!duplicated(names(ranked_list))]
+
+#to use the subcategory
+# msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+# Retrieve MSigDB gene sets for human (e.g., Hallmark collection)
+msigdb_genesets <- msigdbr(species = "Homo sapiens", category = "H")  # 'H' for Hallmark
+msigdb_list <- split(x = msigdb_genesets$entrez_gene, f = msigdb_genesets$gs_name)
+
+# Perform GSEA using fgseaMultilevel
+fgsea_results <- fgseaMultilevel(
+  pathways = msigdb_list,
+  stats = ranked_list,
+  minSize = 15,    # Minimum gene set size
+  maxSize = 500    # Maximum gene set size
+)
+
+# View the top enriched pathways
+print(head(fgsea_results))
+
+# Generate a GSEA summary plot using plotGseaTable
+top_pathways <- fgsea_results %>%
+  arrange(padj) %>%
+  head(10)  # Adjust the number of top pathways displayed as needed
+
+plotGseaTable(
+  pathways = msigdb_list[top_pathways$pathway],  # Subset the pathways for the top results
+  stats = ranked_list,                          # Use the ranked list
+  fgseaRes = top_pathways,                      # Results of GSEA for these pathways
+  gseaParam = 0.5                               # Adjust for better visualization
+)
+
+# Optional: Bar plot to visualize the top pathways
+ggplot(top_pathways, aes(reorder(pathway, -NES), NES)) +
+  geom_col(aes(fill = padj < 0.05)) +
+  coord_flip() +
+  labs(x = "Pathway", y = "Normalized Enrichment Score (NES)", title = "Top GSEA Pathways") +
+  theme_minimal() +
+  scale_fill_manual(values = c("TRUE" = "red", "FALSE" = "grey")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# View the top enriched pathways
+print(head(fgsea_results))
+
+# Optional: Visualize the results with a plot
+library(ggplot2)
+ggplot(fgsea_results, aes(reorder(pathway, -NES), NES)) +
+  geom_col(aes(fill = padj < 0.05)) +
+  coord_flip() +
+  labs(x = "Pathway", y = "Normalized Enrichment Score (NES)", title = "GSEA Results") +
+  theme_minimal()
+
+```
+1. H: Hallmark Gene Sets
+Category Code: "H"
+Description: This collection contains 50 "hallmark" gene sets that summarize and represent specific well-defined biological states or processes.
+2. C1: Positional Gene Sets
+Category Code: "C1"
+Description: Gene sets corresponding to specific chromosomal locations. These gene sets represent genes that are localized to particular regions on chromosomes.
+3. C2: Curated Gene Sets
+Category Code: "C2"
+Description: This collection includes gene sets curated from major online pathway databases (e.g., KEGG, Reactome, BioCarta), publications in PubMed, and knowledge of domain experts.
+Subcategories:
+CGP: Chemical and Genetic Perturbations (perturbations, drug treatments, etc.)
+CP: Canonical Pathways (well-known pathways from databases)
+CP:KEGG: KEGG Pathways
+CP:REACTOME: Reactome Pathways
+CP:WIKIPATHWAYS: WikiPathways
+4. C3: Regulatory Target Gene Sets
+Category Code: "C3"
+Description: This collection consists of gene sets representing regulatory motifs and microRNA (miRNA) targets.
+Subcategories:
+TFT: Transcription Factor Targets
+MIR: miRNA Targets
+5. C4: Computational Gene Sets
+Category Code: "C4"
+Description: Gene sets defined by computational analyses. It includes collections based on expression signatures and co-expression modules.
+Subcategories:
+CM: Cancer Modules
+CGN: Cancer Gene Neighborhoods
+6. C5: GO Gene Sets
+Category Code: "C5"
+Description: Gene sets based on Gene Ontology (GO) terms. These are divided into Biological Process (BP), Cellular Component (CC), and Molecular Function (MF).
+Subcategories:
+GO:BP: GO Biological Process
+GO:CC: GO Cellular Component
+GO:MF: GO Molecular Function
+7. C6: Oncogenic Signatures
+Category Code: "C6"
+Description: Gene sets representing signatures of oncogenic states derived from cancer studies.
+8. C7: Immunologic Signatures
+Category Code: "C7"
+Description: Gene sets derived from studies of immune cell states, perturbations, and immune responses.
+9. C8: Cell Type Signatures
+Category Code: "C8"
+Description: Gene sets representing the cell type-specific expression from single-cell RNA sequencing data.
+10. C9: COVID-19 Gene Sets
+Category Code: "C9"
+Description: Gene sets related to COVID-19, including genes responsive to SARS-CoV-2 infection
