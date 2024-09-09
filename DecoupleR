@@ -1,0 +1,755 @@
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+# Extract Ensembl IDs from your matrix
+ensembl_ids <- rownames(mat)
+
+# Map Ensembl IDs to Gene Symbols using org.Hs.eg.db
+mapped_symbols <- mapIds(
+    org.Hs.eg.db,
+    keys = ensembl_ids,
+    column = "SYMBOL",
+    keytype = "ENSEMBL",
+    multiVals = "first"
+)
+
+# Remove rows without gene symbols
+mapped_symbols <- mapped_symbols[!is.na(mapped_symbols)]
+# Keep only rows with valid mappings
+mat <- mat[names(mapped_symbols), ]
+rownames(mat) <- mapped_symbols
+# Assuming 'mat' is your counts matrix with gene symbols as rownames
+library(dplyr)
+
+# Convert the matrix to a data frame for easier manipulation
+counts_df <- as.data.frame(mat)
+
+# Add gene symbols as a column
+counts_df <- counts_df %>%
+  rownames_to_column(var = "Gene")
+
+# Aggregate counts by summing duplicates
+counts_df <- counts_df %>%
+  group_by(Gene) %>%
+  summarise(across(everything(), sum, na.rm = TRUE))
+
+# Convert back to matrix
+mat <- as.matrix(counts_df[-1])
+rownames(mat) <- counts_df$Gene
+
+# Check if duplicates are handled correctly
+print(dim(mat))  # This should show unique gene symbols as row names
+
+
+```
+
+
+```{r}
+# Ensure decoupleR and necessary libraries are loaded
+library(decoupleR)
+library(dplyr)
+library(tibble)
+
+# Load the network for TF activity inference (e.g., CollecTRI)
+net <- get_collectri(organism = 'human', split_complexes = FALSE)
+
+# Check for common genes between your count matrix and the network
+common_genes <- intersect(rownames(mat), net$target)
+print(length(common_genes))  # Ensure this is greater than zero
+
+# Filter the matrix to only include common genes
+mat <- mat[rownames(mat) %in% common_genes, ]
+
+# Run ULM to infer transcription factor activities
+results_ulm <- run_ulm(mat = mat, 
+                       net = net, 
+                       .source = 'source', 
+                       .target = 'target', 
+                       .mor = 'mor', 
+                       minsize = 5)
+
+# View the results
+head(results_ulm)
+
+# Save the ULM results to a CSV file
+write.csv(results_ulm, "/Users/kathiexu/Desktop/RNAseq/test/Caki2/DecoupleR/ulm_results.csv", row.names = FALSE)
+
+```
+
+```{r}
+# Load necessary libraries for visualization
+library(pheatmap)
+library(ggplot2)
+
+# Transform results for heatmap visualization
+ulm_mat <- results_ulm %>%
+  filter(statistic == 'ulm') %>%
+  pivot_wider(id_cols = source, names_from = condition, values_from = score) %>%
+  column_to_rownames(var = 'source') %>%
+  as.matrix()
+
+# Plot heatmap of TF activities
+pheatmap(ulm_mat, cluster_rows = TRUE, cluster_cols = TRUE, 
+         show_rownames = TRUE, show_colnames = TRUE,
+         color = colorRampPalette(c("blue", "white", "red"))(100))
+
+```
+```{r}
+# Load required libraries
+library(pheatmap)
+library(dplyr)
+library(tidyr)
+
+# Transform the results into a matrix format suitable for heatmap plotting
+ulm_mat <- results_ulm %>%
+  filter(statistic == 'ulm') %>%
+  pivot_wider(id_cols = source, names_from = condition, values_from = score) %>%
+  column_to_rownames(var = 'source') %>%
+  as.matrix()
+
+# Generate the heatmap
+pheatmap(
+  ulm_mat,
+  cluster_rows = TRUE,    # Cluster rows to group similar TFs
+  cluster_cols = TRUE,    # Cluster columns to group similar samples
+  show_rownames = TRUE,   # Show TF names on the rows
+  show_colnames = TRUE,   # Show sample names on the columns
+  color = colorRampPalette(c("blue", "white", "red"))(100),  # Color scale from blue (low) to red (high)
+  scale = "row",          # Scale by rows to highlight relative differences in TF activities
+  border_color = NA       # Remove borders for cleaner look
+)
+
+```
+```{r}
+# Load ggplot2 for plotting
+library(ggplot2)
+
+# Select top TFs based on variability or significance, if available
+top_tfs <- results_ulm %>%
+  arrange(desc(abs(score))) %>%  # Sort by absolute activity score
+  slice_head(n = 10)             # Select top 10 TFs for simplicity
+
+# Plot bar plot
+ggplot(top_tfs, aes(x = reorder(source, score), y = score, fill = score)) +
+  geom_bar(stat = "identity") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  coord_flip() +  # Flip coordinates for better readability
+  theme_minimal() +
+  labs(title = "Top Transcription Factor Activities",
+       x = "Transcription Factors", y = "Activity Score") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+
+# Assume `results_ulm` is your data frame from decoupleR containing TF activities
+# Filter for the ULM results (or your method of choice)
+results_filtered <- results_ulm %>%
+  filter(statistic == 'ulm')
+
+# Select top TFs by highest absolute activity scores
+# You can adjust the 'n' parameter to choose how many top TFs to highlight
+top_tfs <- results_filtered %>%
+  arrange(desc(abs(score))) %>%  # Sort by absolute score to highlight strongest changes
+  slice_head(n = 10)             # Select top 10 TFs
+
+# Check the top TFs selected
+print(top_tfs)
+
+# Bar Plot to Highlight Top TFs
+ggplot(top_tfs, aes(x = reorder(source, score), y = score, fill = score)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  coord_flip() +  # Flip coordinates for better readability
+  theme_minimal() +
+  labs(
+    title = "Top Transcription Factor Activities",
+    x = "Transcription Factors",
+    y = "Activity Score"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 0.5),
+    axis.title = element_text(face = "bold")
+  )
+
+```
+
+```{r}
+library(dplyr)
+library(tibble)
+
+# Function to prepare DEG matrix with SYMBOL as row names, handling missing and duplicate SYMBOLs
+prepare_deg_matrix <- function(df) {
+  df %>%
+    filter(!is.na(SYMBOL)) %>%  # Remove rows with missing SYMBOLs
+    filter(SYMBOL != "") %>%    # Remove rows with empty SYMBOLs
+    distinct(SYMBOL, .keep_all = TRUE) %>%  # Keep distinct SYMBOLs to avoid duplicates
+    filter(!is.na(stat)) %>%  # Ensure there are no missing values in 'stat'
+    select(SYMBOL, stat) %>%  # Select SYMBOL and stat for ULM
+    column_to_rownames(var = "SYMBOL") %>%  # Set SYMBOL as row names
+    as.matrix()  # Convert to matrix
+}
+
+# Read your DESeq2 result files
+results_list <- list(
+  read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_no_empty1_annotated_filtered_significant.csv"),
+  read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv"),
+  read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv")
+)
+
+# Prepare DEG matrices for each result set
+deg_matrices <- lapply(results_list, function(df) {
+  tryCatch({
+    prepare_deg_matrix(df)
+  }, error = function(e) {
+    message("Error in processing matrix: ", e$message)
+    NULL  # Return NULL if there's an error
+  })
+})
+
+# Remove NULL elements in case of errors during preparation
+deg_matrices <- deg_matrices[!sapply(deg_matrices, is.null)]
+
+# Check the first matrix to ensure it is correctly formatted
+if (length(deg_matrices) > 0) {
+  print(head(deg_matrices[[1]]))
+} else {
+  message("No matrices were prepared correctly. Check your data.")
+}
+
+# Load the network for TF activity inference (e.g., CollecTRI)
+net <- get_collectri(organism = 'human', split_complexes = FALSE)
+
+# Run ULM to infer transcription factor activities using decoupleR
+results_ulm <- lapply(deg_matrices, function(mat) {
+  run_ulm(mat = mat, 
+          net = net, 
+          .source = 'source', 
+          .target = 'target', 
+          .mor = 'mor', 
+          minsize = 5)
+})
+
+# Check the ULM results
+if (length(results_ulm) > 0) {
+  print(results_ulm[[1]])
+} else {
+  message("No ULM results were generated. Check your matrices and network.")
+}
+
+```
+```{r}
+# Create the directory if it doesn't exist
+output_dir <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/DecoupleR"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+
+# Function to save each ULM result to a CSV file
+save_ulm_results <- function(ulm_result, filename) {
+  write.csv(ulm_result, file = filename, row.names = FALSE)
+}
+
+# Saving ULM results
+filenames <- c("ULM_results_PB1_vs_Empty.csv", 
+               "ULM_results_VHL_vs_Empty.csv", 
+               "ULM_results_PB1_VHL_vs_Empty.csv")
+
+# Ensure results_ulm list is populated
+if (length(results_ulm) > 0) {
+  for (i in seq_along(results_ulm)) {
+    save_ulm_results(results_ulm[[i]], file.path(output_dir, filenames[i]))
+  }
+  message("ULM results have been saved successfully in the specified directory.")
+} else {
+  message("ULM results list is empty. Ensure ULM has been run successfully.")
+}
+
+```
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+# Define file paths for decoupleR results
+file_paths <- list.files("/Users/kathiexu/Desktop/RNAseq/test/Caki2/DecoupleR", 
+                         pattern = "ULM_results_.*\\.csv$", full.names = TRUE)
+
+# Read each file into a list
+results_list <- lapply(file_paths, read.csv)
+
+# Check the first few rows of each result set
+lapply(results_list, head)
+
+
+```
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+# Define significance threshold
+pval_threshold <- 0.05
+
+# Step 1: Read the data from the three files
+# Replace with your actual file paths
+file1 <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/DecoupleR/ULM_results_PB1_vs_Empty.csv"
+file2 <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/DecoupleR/ULM_results_VHL_vs_Empty.csv"
+file3 <- "/Users/kathiexu/Desktop/RNAseq/test/Caki2/DecoupleR/ULM_results_PB1_VHL_vs_Empty.csv"
+
+results1 <- read.csv(file1)
+results2 <- read.csv(file2)
+results3 <- read.csv(file3)
+
+# Step 2: Full join the results on 'source' (TF name)
+combined_results <- results1 %>%
+  full_join(results2, by = "source", suffix = c("_PB1_vs_Empty", "_VHL_vs_Empty")) %>%
+  full_join(results3, by = "source") %>%
+  rename(score_PB1_VHL_vs_Empty = score, p_value_PB1_VHL_vs_Empty = p_value)
+
+# Step 3: Impute missing values with a small number (e.g., 0.01)
+combined_results[is.na(combined_results)] <- 0.01
+
+# Step 4: Filter for significant TFs based on p-value threshold
+significant_results <- combined_results %>%
+  filter(p_value_PB1_vs_Empty < pval_threshold | 
+         p_value_VHL_vs_Empty < pval_threshold | 
+         p_value_PB1_VHL_vs_Empty < pval_threshold)
+
+# Step 5: Select the top 20 TFs with the highest variability across conditions
+top_tfs <- significant_results %>%
+  mutate(variability = rowSums(abs(select(., starts_with("score_"))), na.rm = TRUE)) %>%
+  arrange(desc(variability)) %>%
+  head(20)
+
+# Step 6: Prepare data for heatmap
+# Select relevant columns and reshape data
+heatmap_data <- top_tfs %>%
+  select(source, score_PB1_vs_Empty, score_VHL_vs_Empty, score_PB1_VHL_vs_Empty) %>%
+  column_to_rownames("source") %>%
+  as.matrix()
+
+# Step 7: Plot heatmap of the top 20 significant TF activities
+# Customize color palette and breaks for visualization
+palette_length <- 100
+my_color <- colorRampPalette(c("Darkblue", "white", "red"))(palette_length)
+my_breaks <- c(seq(-3, 0, length.out = ceiling(palette_length / 2) + 1),
+               seq(0.05, 3, length.out = floor(palette_length / 2)))
+
+# Plot heatmap
+pheatmap(heatmap_data, 
+         border_color = NA, 
+         color = my_color, 
+         breaks = my_breaks, 
+         cluster_rows = TRUE, 
+         cluster_cols = TRUE, 
+         main = "Top 20 Significant TF Activity Heatmap")
+
+
+```
+```{r}
+# Step 6: Prepare data for bar plot
+# Reshape data to long format for ggplot
+bar_plot_data <- top_tfs %>%
+  select(source, score_PB1_vs_Empty, score_VHL_vs_Empty, score_PB1_VHL_vs_Empty) %>%
+  pivot_longer(cols = starts_with("score_"), 
+               names_to = "Condition", 
+               values_to = "Score") %>%
+  mutate(Condition = gsub("score_", "", Condition))
+
+# Step 7: Plot bar plot of the top 20 significant TF activities
+ggplot(bar_plot_data, aes(x = reorder(source, -Score), y = Score, fill = Condition)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  labs(title = "Top 20 Significant TF Activity Scores", 
+       x = "Transcription Factors", 
+       y = "Activity Score") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+# Load the specific dataset for PB1 vs Empty
+pb1_vs_empty <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_no_empty1_annotated_filtered_significant.csv")
+
+# Filter out rows with missing SYMBOLs and ensure unique SYMBOLs
+pb1_vs_empty_filtered <- pb1_vs_empty %>%
+  filter(!is.na(SYMBOL)) %>%
+  distinct(SYMBOL, .keep_all = TRUE)  # Keep only unique SYMBOLs
+
+# Prepare the deg matrix with SYMBOL as row names
+deg <- pb1_vs_empty_filtered %>%
+  select(SYMBOL, log2FoldChange, stat, padj) %>%
+  rename(logfc = log2FoldChange, t_value = stat, p_value = padj) %>%
+  column_to_rownames(var = "SYMBOL") %>%
+  as.matrix()
+
+# Check the dimensions and first few rows
+print(dim(deg))
+head(deg)
+
+
+```
+
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(tidyr)
+
+# Load the specific dataset for PB1 vs Empty
+pb1_vs_empty <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_no_empty1_annotated_filtered_significant.csv")
+
+# Filter out rows with missing SYMBOLs and ensure unique SYMBOLs
+pb1_vs_empty_filtered <- pb1_vs_empty %>%
+  filter(!is.na(SYMBOL)) %>%
+  distinct(SYMBOL, .keep_all = TRUE)  # Keep only unique SYMBOLs
+
+# Prepare the deg matrix with SYMBOL as row names
+deg <- pb1_vs_empty_filtered %>%
+  select(SYMBOL, log2FoldChange, stat, padj) %>%
+  rename(logfc = log2FoldChange, t_value = stat, p_value = padj) %>%
+  column_to_rownames(var = "SYMBOL") %>%
+  as.matrix()
+
+```
+
+```{r}
+# Load the network for TF activity inference (e.g., CollecTRI)
+# Assuming 'net' is already loaded and contains the network data with 'source', 'target', and 'mor' columns
+
+# Define your TF of interest
+tf <- 'SREBF1'
+
+# Filter the network for the TF of interest
+df <- net %>%
+  filter(source == tf) %>%
+  arrange(target) %>%
+  mutate(ID = target, color = "3") %>%
+  column_to_rownames('target')
+
+# Match the target genes in the network with the DEGs
+inter <- sort(intersect(rownames(deg), rownames(df)))
+df <- df[inter, ]
+df[, c('logfc', 't_value', 'p_value')] <- deg[inter, ]
+
+# Annotate the results based on the mode of regulation (mor) and differential expression statistics
+df <- df %>%
+  mutate(color = if_else(mor > 0 & t_value > 0, '1', color)) %>%
+  mutate(color = if_else(mor > 0 & t_value < 0, '2', color)) %>%
+  mutate(color = if_else(mor < 0 & t_value > 0, '2', color)) %>%
+  mutate(color = if_else(mor < 0 & t_value < 0, '1', color))
+
+
+# Plot the differential target genes of NFE2L2
+ggplot(df, aes(x = logfc, y = -log10(p_value), color = color, size = abs(mor))) +
+  geom_point() +
+  scale_colour_manual(values = c("red", "royalblue3", "grey")) +
+  geom_label_repel(aes(label = ID, size = 1)) + 
+  theme_minimal() +
+  theme(legend.position = "none") +
+  geom_vline(xintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  ggtitle(paste("Differential Target Genes of", tf))
+
+#blue is deactivating; red is activating
+```
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tibble)
+library(decoupleR)
+library(ggplot2)
+library(pheatmap)
+
+
+# Step 3: Run Pathway Analysis
+# Assume `mat` is your normalized log-transformed counts matrix
+# Note: Make sure `mat` has matching gene symbols with the `deg` matrix.
+sample_acts <- run_mlm(mat = mat, net = net, .source = 'source', .target = 'target',
+                       .mor = 'weight', minsize = 5)
+
+# View the results
+head(sample_acts)
+
+# Step 4: Visualize the Pathway Activities
+# Transform to wide matrix format for heatmap
+sample_acts_mat <- sample_acts %>%
+  pivot_wider(id_cols = 'condition', names_from = 'source',
+              values_from = 'score') %>%
+  column_to_rownames('condition') %>%
+  as.matrix()
+
+# Scale per feature
+sample_acts_mat <- scale(sample_acts_mat)
+
+# Define the color palette
+palette_length = 100
+my_color = colorRampPalette(c("Darkblue", "white", "red"))(palette_length)
+my_breaks <- c(seq(-3, 0, length.out = ceiling(palette_length / 2) + 1),
+               seq(0.05, 3, length.out = floor(palette_length / 2)))
+
+# Plot the heatmap
+pheatmap(sample_acts_mat, border_color = NA, color = my_color, breaks = my_breaks)
+
+```
+
+```{r}
+# Step 1: Load DESeq2 Results Files for All Comparisons
+pb1_vs_empty <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_vs_Empty_no_empty1_annotated_filtered_significant.csv")
+vhl_vs_empty <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv")
+pb1_vhl_vs_empty <- read.csv("/Users/kathiexu/Desktop/RNAseq/test/Caki2/results_PB1_VHL_vs_Empty_no_empty1_annotated_filtered_significant.csv")
+
+# Step 2: Prepare DEG Matrices
+
+# Function to prepare DEG matrix
+prepare_deg_matrix <- function(df) {
+  df %>%
+    filter(!is.na(SYMBOL)) %>%                # Remove rows without SYMBOL
+    select(SYMBOL, stat) %>%                  # Select SYMBOL and the desired statistic (e.g., stat)
+    column_to_rownames(var = "SYMBOL") %>%    # Use SYMBOL as row names
+    as.matrix()                               # Convert to matrix
+}
+
+# Prepare matrices for each comparison
+deg_pb1_vs_empty <- prepare_deg_matrix(pb1_vs_empty)
+deg_vhl_vs_empty <- prepare_deg_matrix(vhl_vs_empty)
+deg_pb1_vhl_vs_empty <- prepare_deg_matrix(pb1_vhl_vs_empty)
+
+# Check the matrices to ensure correct formatting
+print(dim(deg_pb1_vs_empty))
+print(dim(deg_vhl_vs_empty))
+print(dim(deg_pb1_vhl_vs_empty))
+
+# Step 3: Run DecoupleR Analysis for Pathway Enrichment
+# Load the pathway network, e.g., using PROGENy
+net <- get_progeny(organism = 'human', top = 500)
+
+# Run the MLM method for each comparison
+results_pb1_vs_empty <- run_mlm(mat = deg_pb1_vs_empty, net = net, .source = 'source', .target = 'target', .mor = 'weight', minsize = 5)
+results_vhl_vs_empty <- run_mlm(mat = deg_vhl_vs_empty, net = net, .source = 'source', .target = 'target', .mor = 'weight', minsize = 5)
+results_pb1_vhl_vs_empty <- run_mlm(mat = deg_pb1_vhl_vs_empty, net = net, .source = 'source', .target = 'target', .mor = 'weight', minsize = 5)
+
+# View the results
+print(results_pb1_vs_empty)
+print(results_vhl_vs_empty)
+print(results_pb1_vhl_vs_empty)
+
+# Step 4: Save Results as CSV Files
+write.csv(results_pb1_vs_empty, "/Users/kathiexu/Desktop/RNAseq/test/Caki2/DecoupleR/results_PB1_vs_Empty_pathway_enrichment.csv", row.names = FALSE)
+write.csv(results_vhl_vs_empty, "/Users/kathiexu/Desktop/RNAseq/test/Caki2/DecoupleR/results_VHL_vs_Empty_pathway_enrichment.csv", row.names = FALSE)
+write.csv(results_pb1_vhl_vs_empty, "/Users/kathiexu/Desktop/RNAseq/test/Caki2/DecoupleR/results_PB1_VHL_vs_Empty_pathway_enrichment.csv", row.names = FALSE)
+
+
+```
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Combine results into a single data frame for plotting
+results_all <- bind_rows(
+  results_pb1_vs_empty %>% mutate(comparison = "PB1 vs Empty"),
+  results_vhl_vs_empty %>% mutate(comparison = "VHL vs Empty"),
+  results_pb1_vhl_vs_empty %>% mutate(comparison = "PB1+VHL vs Empty")
+)
+
+# Bar plot of pathway activities
+ggplot(results_all, aes(x = reorder(source, score), y = score, fill = comparison)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  scale_fill_manual(values = c("PB1 vs Empty" = "dodgerblue", 
+                               "VHL vs Empty" = "darkorange", 
+                               "PB1+VHL vs Empty" = "forestgreen")) +
+  theme_minimal() +
+  labs(x = "Pathway", y = "Activity Score", title = "Pathway Activity Scores by Comparison") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title = element_text(face = "bold", size = 12),
+        axis.text.y = element_text(size = 10),
+        legend.position = "top")
+
+```
+
+```{r}
+library(pheatmap)
+
+# Prepare matrix for heatmap
+heatmap_data <- results_all %>%
+  select(source, score, comparison) %>%
+  pivot_wider(names_from = comparison, values_from = score) %>%
+  column_to_rownames(var = "source") %>%
+  as.matrix()
+
+# Plot heatmap
+pheatmap(
+  heatmap_data,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = colorRampPalette(c("navy", "white", "firebrick"))(50),
+  main = "Heatmap of Pathway Activities",
+  border_color = NA,
+  fontsize = 10
+)
+
+```
+```{r}
+# Define the pathway of interest
+pathway_to_inspect <- 'Trail'
+
+# Function to inspect and plot a single pathway
+plot_single_pathway <- function(pathway_name, net, deg) {
+  # Filter the network for the selected pathway
+  df <- net %>%
+    filter(source == pathway_name) %>%
+    arrange(target) %>%
+    mutate(ID = target, color = "3") %>%
+    column_to_rownames('target')
+  
+  # Find intersection between DEGs and pathway targets
+  inter <- sort(intersect(rownames(deg), rownames(df)))
+  df <- df[inter, ]
+  df['t_value'] <- deg[inter, ]
+  
+  # Set colors based on the relationship between weight and t-value
+  df <- df %>%
+    mutate(color = if_else(weight > 0 & t_value > 0, '1', color)) %>%
+    mutate(color = if_else(weight > 0 & t_value < 0, '2', color)) %>%
+    mutate(color = if_else(weight < 0 & t_value > 0, '2', color)) %>%
+    mutate(color = if_else(weight < 0 & t_value < 0, '1', color))
+  
+  # Plot the pathway activity
+  ggplot(df, aes(x = weight, y = t_value, color = color)) + 
+    geom_point() +
+    scale_colour_manual(values = c("red", "royalblue3", "grey")) +
+    geom_label_repel(aes(label = ID)) + 
+    theme_minimal() +
+    theme(legend.position = "none") +
+    geom_vline(xintercept = 0, linetype = 'dotted') +
+    geom_hline(yintercept = 0, linetype = 'dotted') +
+    ggtitle(paste("Pathway Activity:", pathway_name))
+}
+
+# Plotting the Hypoxia pathway
+plot_single_pathway(pathway_to_inspect, net, deg)
+
+```
+First Quadrant (Top Right, Red): Genes with positive weights and positive t-values, indicating that these genes are positively contributing to the pathway activity and are upregulated in your condition.
+Second Quadrant (Top Left, Blue): Genes with negative weights and positive t-values, suggesting that these genes have an inhibitory relationship with the pathway but are upregulated.
+Third Quadrant (Bottom Left, Blue): Genes with negative weights and negative t-values, which indicates they are negatively contributing to pathway activity and are downregulated.
+Fourth Quadrant (Bottom Right, Red): Genes with positive weights and negative t-values, showing that these genes are positively associated with the pathway but are downregulated.
+
+
+
+
+1. Adjusted Bar Plot for Significant Pathways
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Combine results into a single data frame and filter for significant pathways
+results_all <- bind_rows(
+  results_pb1_vs_empty %>% mutate(comparison = "PB1 vs Empty"),
+  results_vhl_vs_empty %>% mutate(comparison = "VHL vs Empty"),
+  results_pb1_vhl_vs_empty %>% mutate(comparison = "PB1+VHL vs Empty")
+)
+
+# Filter pathways with significant p-values (e.g., p_value < 0.05)
+significant_results <- results_all %>% filter(p_value < 0.05)
+
+# Bar plot of significant pathway activities
+ggplot(significant_results, aes(x = reorder(source, score), y = score, fill = comparison)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  scale_fill_manual(values = c("PB1 vs Empty" = "dodgerblue", 
+                               "VHL vs Empty" = "darkorange", 
+                               "PB1+VHL vs Empty" = "forestgreen")) +
+  theme_minimal() +
+  labs(x = "Pathway", y = "Activity Score", title = "Significant Pathway Activity Scores by Comparison") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title = element_text(face = "bold", size = 12),
+        axis.text.y = element_text(size = 10),
+        legend.position = "top")
+
+```
+```{r}
+# Define the pathway of interest (e.g., Trail)
+pathway_to_inspect <- 'NFkB'
+
+# Function to inspect and plot a single pathway
+plot_single_pathway <- function(pathway_name, net, deg) {
+  # Filter the network for the selected pathway
+  df <- net %>%
+    filter(source == pathway_name) %>%
+    arrange(target) %>%
+    mutate(ID = target, color = "3") %>%
+    column_to_rownames('target')
+  
+  # Find intersection between DEGs and pathway targets
+  inter <- sort(intersect(rownames(deg), rownames(df)))
+  df <- df[inter, ]
+  df['t_value'] <- deg[inter, ]
+  
+  # Set colors based on the relationship between weight and t-value
+  df <- df %>%
+    mutate(color = if_else(weight > 0 & t_value > 0, '1', color)) %>%
+    mutate(color = if_else(weight > 0 & t_value < 0, '2', color)) %>%
+    mutate(color = if_else(weight < 0 & t_value > 0, '2', color)) %>%
+    mutate(color = if_else(weight < 0 & t_value < 0, '1', color))
+  
+  # Plot the pathway activity
+  ggplot(df, aes(x = weight, y = t_value, color = color)) + 
+    geom_point() +
+    scale_colour_manual(values = c("red", "royalblue3", "grey")) +
+    geom_label_repel(aes(label = ID)) + 
+    theme_minimal() +
+    theme(legend.position = "none") +
+    geom_vline(xintercept = 0, linetype = 'dotted') +
+    geom_hline(yintercept = 0, linetype = 'dotted') +
+    ggtitle(paste("Pathway Activity:", pathway_name))
+}
+
+# Ensure the pathway is significant before plotting
+if (pathway_to_inspect %in% significant_results$source) {
+  plot_single_pathway(pathway_to_inspect, net, deg)
+} else {
+  print(paste("The pathway", pathway_to_inspect, "is not significantly enriched."))
+}
+
+```
+```{r}
+library(pheatmap)
+library(dplyr)
+library(tidyr)
+
+# Prepare matrix for heatmap with only significant pathways
+significant_heatmap_data <- significant_results %>%
+  select(source, score, comparison) %>%
+  pivot_wider(names_from = comparison, values_from = score) %>%
+  column_to_rownames(var = "source") %>%
+  as.matrix()
+
+# Check for NA/NaN/Inf values and replace them with zeros
+significant_heatmap_data[is.na(significant_heatmap_data) | is.nan(significant_heatmap_data) | is.infinite(significant_heatmap_data)] <- 0
+
+# Plot heatmap for significant pathways
+pheatmap(
+  significant_heatmap_data,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = colorRampPalette(c("navy", "white", "firebrick"))(50),
+  main = "Heatmap of Significant Pathway Activities",
+  border_color = NA,
+  fontsize = 10
+)
+
+```
